@@ -231,7 +231,8 @@ float3 sample_direct_light(Bsdf bsdf, float3 position, float3 wo, inout Rng rng)
         const float3 f = bsdf_eval(bsdf, wo, wi);
         if (all(f == float3(0.0, 0.0, 0.0)))
             return float3(0.0, 0.0, 0.0);
-        if (occluded(position + bsdf.frame.normal * kShadowEpsilon, light_dir, distance - kShadowEpsilon))
+        if (occluded(offset_ray_origin(position, bsdf.frame.normal, light_dir), light_dir,
+                     distance - kShadowEpsilon))
             return float3(0.0, 0.0, 0.0);
         return f * light.emission.rgb * wi.z / (distance * distance);
     }
@@ -248,7 +249,7 @@ float3 sample_direct_light(Bsdf bsdf, float3 position, float3 wo, inout Rng rng)
     const float3 f = bsdf_eval(bsdf, wo, wi);
     if (all(f == float3(0.0, 0.0, 0.0)))
         return float3(0.0, 0.0, 0.0);
-    if (occluded(position + bsdf.frame.normal * kShadowEpsilon, light_dir,
+    if (occluded(offset_ray_origin(position, bsdf.frame.normal, light_dir), light_dir,
                  sample_distance - kShadowEpsilon))
         return float3(0.0, 0.0, 0.0);
 
@@ -271,11 +272,13 @@ void computeMain(uint3 thread_id : SV_DispatchThreadID) {
     const uint sample_count = g_uniforms.options.w;
     const CameraData camera = g_uniforms.camera;
 
-    const float2 uv = (float2(pixel) + 0.5) / float2(width, height);
+    Rng rng = rng_create(rng_seed(pixel, g_uniforms.counts.w));
+
+    // Jitter the pixel sample within the pixel so accumulation anti-aliases
+    // silhouettes and other high-frequency edges.
+    const float2 uv = (float2(pixel) + rng_float2(rng)) / float2(width, height);
     float2 ndc = uv * 2.0 - 1.0;
     ndc.y = -ndc.y;
-
-    Rng rng = rng_create(rng_seed(pixel, g_uniforms.counts.w));
 
     float3 origin = camera.position.xyz;
     float3 direction = normalize(camera.forward.xyz + camera.right.xyz * ndc.x +
@@ -325,7 +328,7 @@ void computeMain(uint3 thread_id : SV_DispatchThreadID) {
         float3 wi;
         float pdf;
         bool sample_delta;
-        const float3 f = bsdf_sample(bsdf, wo, rng_float2(rng), wi, pdf, sample_delta);
+        const float3 f = bsdf_sample(bsdf, wo, rng, wi, pdf, sample_delta);
         if (sample_delta) {
             // Perfect mirror: f already includes the 1/pdf factor (Fresnel).
             throughput *= f;
@@ -340,12 +343,13 @@ void computeMain(uint3 thread_id : SV_DispatchThreadID) {
         }
 
         direction = frame_to_world(bsdf.frame, wi);
-        origin = hit.position + hit.normal * kShadowEpsilon;
+        origin = offset_ray_origin(hit.position, hit.normal, direction);
         primary = false;
 
         // Russian roulette.
         if (depth >= 3) {
-            const float survival = min(0.95, max(throughput.r, max(throughput.g, throughput.b)));
+            const float survival =
+                clamp(max(throughput.r, max(throughput.g, throughput.b)), 0.05, 0.95);
             if (rng_float(rng) > survival)
                 break;
             throughput /= survival;

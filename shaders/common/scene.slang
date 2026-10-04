@@ -59,3 +59,13 @@ float3 instance_to_object_dir(GpuInstance instance, float3 d) {
     return instance.to_object_x.xyz * d.x + instance.to_object_y.xyz * d.y +
            instance.to_object_z.xyz * d.z;
 }
+
+/// @brief Offsets a ray origin along the shading normal so a secondary ray does
+///        not immediately re-hit the surface it started on. The epsilon scales
+///        with the position magnitude to stay effective at grazing angles.
+float3 offset_ray_origin(float3 position, float3 normal, float3 direction) {
+    float3 offset = normal * (1e-3 * (1.0 + length(position)));
+    if (dot(direction, normal) < 0.0)
+        offset = -offset;
+    return position + offset;
+}

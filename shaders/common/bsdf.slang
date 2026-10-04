@@ -6,6 +6,7 @@
 // Lambertian diffuse lobe for the metallic-roughness material model.
 
 #include "common/scene.slang"
+#include "common/random.slang"
 
 static const float kPi = 3.14159265358979;
 
@@ -165,34 +166,41 @@ float3 cosine_sample_hemisphere_local(float2 u) {
 // is in the local frame. For a delta (perfect mirror) sample, delta is true,
 // pdf is 0 and the returned value is already the throughput multiplier
 // (the Fresnel reflectance), so the caller does not divide by a pdf.
-float3 bsdf_sample(Bsdf bsdf, float3 wo, float2 u, out float3 wi, out float pdf, out bool delta) {
+//
+// GGX reflection can produce a direction below the surface; those samples are
+// rejected and redrawn (PBRT does the same), otherwise the path would be
+// terminated and leave black speckles at grazing angles.
+float3 bsdf_sample(Bsdf bsdf, float3 wo, inout Rng rng, out float3 wi, out float pdf, out bool delta) {
     delta = false;
 
-    if (u.x < bsdf.p_spec) {
-        if (bsdf.specular_is_delta) {
-            wi = float3(-wo.x, -wo.y, wo.z);
-            if (wi.z <= 0.0) {
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        const float2 u = rng_float2(rng);
+
+        if (u.x < bsdf.p_spec) {
+            if (bsdf.specular_is_delta) {
+                wi = float3(-wo.x, -wo.y, wo.z);
+                if (wi.z <= 0.0)
+                    break;
+                delta = true;
                 pdf = 0.0;
-                return float3(0.0, 0.0, 0.0);
+                return fresnel_schlick(wo.z, bsdf.f0);
             }
-            delta = true;
-            pdf = 0.0;
-            return fresnel_schlick(wo.z, bsdf.f0);
+
+            const float2 us = float2(min(u.x / max(bsdf.p_spec, 1e-6), 1.0 - 1e-6), u.y);
+            const float3 h = ggx_sample_half(wo, bsdf.alpha, us);
+            wi = -wo + 2.0 * dot(wo, h) * h;
+        } else {
+            const float2 ud = float2((u.x - bsdf.p_spec) / max(1.0 - bsdf.p_spec, 1e-6), u.y);
+            wi = cosine_sample_hemisphere_local(ud);
         }
 
-        const float2 us = float2(min(u.x / max(bsdf.p_spec, 1e-6), 1.0 - 1e-6), u.y);
-        const float3 h = ggx_sample_half(wo, bsdf.alpha, us);
-        wi = -wo + 2.0 * dot(wo, h) * h;
-    } else {
-        const float2 ud = float2((u.x - bsdf.p_spec) / max(1.0 - bsdf.p_spec, 1e-6), u.y);
-        wi = cosine_sample_hemisphere_local(ud);
+        if (wi.z > 0.0) {
+            pdf = bsdf_pdf(bsdf, wo, wi);
+            return bsdf_eval(bsdf, wo, wi);
+        }
     }
 
-    if (wi.z <= 0.0) {
-        pdf = 0.0;
-        return float3(0.0, 0.0, 0.0);
-    }
-
-    pdf = bsdf_pdf(bsdf, wo, wi);
-    return bsdf_eval(bsdf, wo, wi);
+    wi = float3(0.0, 0.0, 1.0);
+    pdf = 0.0;
+    return float3(0.0, 0.0, 0.0);
 }
