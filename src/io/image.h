@@ -32,4 +32,10 @@ ImageData load_image(const std::filesystem::path& path,
                      int desired_channels = 0,
                      bool flip_vertically = false);
 
+/// @brief Decodes an image from an in-memory buffer (used for embedded textures).
+ImageData load_image_from_memory(const void* data,
+                                 size_t size,
+                                 int desired_channels = 0,
+                                 bool flip_vertically = false);
+
 } // namespace vulchovy

@@ -6,6 +6,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "io/gltf.h"
 #include "io/obj.h"
 
 namespace vulchovy {
@@ -141,6 +142,11 @@ Scene build_scene(const SceneDescription& description) {
     Scene scene;
 
     for (const ModelPlacement& placement : description.models) {
+        const std::string extension = std::filesystem::path(placement.path).extension().string();
+        if (extension == ".gltf" || extension == ".glb") {
+            add_gltf(scene, placement.path, placement.transform);
+            continue;
+        }
         ObjModel model = load_obj(placement.path);
         if (model.meshes.empty())
             continue;

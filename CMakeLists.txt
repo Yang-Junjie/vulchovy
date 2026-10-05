@@ -36,6 +36,9 @@ target_include_directories(tinyobjloader INTERFACE ${CMAKE_SOURCE_DIR}/third_par
 add_library(nlohmann_json INTERFACE)
 target_include_directories(nlohmann_json INTERFACE ${CMAKE_SOURCE_DIR}/third_party/nlohmann)
 
+add_library(cgltf INTERFACE)
+target_include_directories(cgltf INTERFACE ${CMAKE_SOURCE_DIR}/third_party/cgltf)
+
 # --- third party (fetched) ---------------------------------------------------
 
 include(FetchContent)
@@ -69,6 +72,7 @@ add_library(vulchovy_core STATIC
     src/camera/perspective_camera.cpp
     src/io/image.cpp
     src/io/obj.cpp
+    src/io/gltf.cpp
     src/io/scene_io.cpp
     src/platform/input.cpp
     src/platform/window.cpp
@@ -103,7 +107,7 @@ target_link_libraries(vulchovy_core PUBLIC
     glm::glm
 )
 
-target_link_libraries(vulchovy_core PRIVATE glfw stb tinyobjloader nlohmann_json)
+target_link_libraries(vulchovy_core PRIVATE glfw stb tinyobjloader nlohmann_json cgltf)
 
 target_compile_options(vulchovy_core PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall -Wextra -Wpedantic>)
