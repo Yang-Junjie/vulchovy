@@ -12,7 +12,10 @@ Scene make_default_scene() {
     scene.meshes.push_back(make_uv_sphere(1.0f, 64, 32)); // mesh 0
     scene.meshes.push_back(make_plane(16.0f, 0.0f));     // mesh 1
 
-    scene.materials.push_back(Material{.base_color = vec3{0.7f, 0.7f, 0.68f}}); // ground
+    scene.materials.push_back(Material{
+        .base_color = vec3{0.75f, 0.75f, 0.78f},
+        .metallic = 1.0f,
+        .roughness = 0.28f}); // frosted metal ground
     scene.materials.push_back(Material{
         .base_color = vec3{0.9f, 0.15f, 0.1f}, .metallic = 0.0f, .roughness = 0.3f});
     scene.materials.push_back(Material{
@@ -42,12 +45,12 @@ Scene make_default_scene() {
     scene.instances.push_back(Instance{
         .mesh_index = 0,
         .material_index = 1,
-        .transform = glm::translate(mat4{1.0f}, vec3{-3.4f, 1.0f, 0.0f}),
+        .transform = glm::translate(mat4{1.0f}, vec3{-4.4f, 1.0f, 0.0f}),
     });
     scene.instances.push_back(Instance{
         .mesh_index = 0,
         .material_index = 2,
-        .transform = glm::translate(mat4{1.0f}, vec3{-1.7f, 1.0f, 0.0f}),
+        .transform = glm::translate(mat4{1.0f}, vec3{-2.2f, 1.0f, 0.0f}),
     });
     scene.instances.push_back(Instance{
         .mesh_index = 0,
@@ -57,18 +60,18 @@ Scene make_default_scene() {
     scene.instances.push_back(Instance{
         .mesh_index = 0,
         .material_index = 4,
-        .transform = glm::translate(mat4{1.0f}, vec3{1.7f, 1.0f, 0.0f}),
+        .transform = glm::translate(mat4{1.0f}, vec3{2.2f, 1.0f, 0.0f}),
     });
     scene.instances.push_back(Instance{
         .mesh_index = 0,
         .material_index = 5,
-        .transform = glm::translate(mat4{1.0f}, vec3{3.4f, 1.0f, 0.0f}),
+        .transform = glm::translate(mat4{1.0f}, vec3{4.4f, 1.0f, 0.0f}),
     });
 
     // HDR environment (image-based lighting). Falls back to a procedural sky
     // when the asset is unavailable so the renderer still runs.
     scene.environment = load_environment(
-        std::filesystem::path{VULCHOVY_ASSET_DIR} / "kloppenheim_06_puresky_2k.hdr");
+        std::filesystem::path{VULCHOVY_ASSET_DIR} / "modern_buildings_2_2k.hdr");
     if (!scene.environment.valid())
         scene.environment = make_procedural_sky();
     scene.environment.intensity = 1.0f;
