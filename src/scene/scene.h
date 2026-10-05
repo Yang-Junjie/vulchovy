@@ -20,6 +20,19 @@ struct Material {
     float transmission = 0.0f; // 0 = opaque, 1 = fully transmissive (glass)
     float ior = 1.5f;          // index of refraction for the dielectric
     vec3 emission{0.0f, 0.0f, 0.0f};
+    int32_t base_color_texture = -1;
+    int32_t metallic_roughness_texture = -1;
+    int32_t normal_texture = -1;
+    int32_t emissive_texture = -1;
+};
+
+/// @brief An RGBA8 texture uploaded to the GPU (sRGB for colour maps).
+struct TextureData {
+    std::vector<uint8_t> pixels; // width * height * 4 bytes
+    uint32_t width = 0;
+    uint32_t height = 0;
+    bool srgb = true;
+    bool valid() const { return width > 0 && height > 0; }
 };
 
 /// @brief CPU-side light: a point (radius 0) or a sphere area light.
@@ -54,6 +67,7 @@ struct Node {
 struct Scene {
     std::vector<Mesh> meshes;
     std::vector<Material> materials;
+    std::vector<TextureData> textures;
     std::vector<Node> nodes; // scene graph; the GPU instances are its flattening
     std::vector<Light> lights;
     Environment environment;

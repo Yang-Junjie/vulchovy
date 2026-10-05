@@ -70,6 +70,7 @@ struct Bsdf {
     float2 alpha;           // per-axis roughness squared (x = tangent, y = bitangent)
     float p_spec;           // probability of choosing the specular lobe when sampling
     bool specular_is_delta; // roughness below the threshold: perfect mirror
+    float3 emission;        // textured emissive radiance
     // Dielectric transmission (glass).
     bool transmissive;
     float eta;              // eta_i / eta_t for the current side
@@ -88,7 +89,7 @@ float3 anisotropic_tangent(float3 n) {
     return normalize(t);
 }
 
-Bsdf make_bsdf(GpuMaterial material, float3 normal, bool front_face) {
+Bsdf make_bsdf(GpuMaterial material, float3 normal, bool front_face, float2 uv) {
     Bsdf bsdf;
 
     const float metallic = clamp(material.params.x, 0.0, 1.0);
@@ -96,6 +97,11 @@ Bsdf make_bsdf(GpuMaterial material, float3 normal, bool front_face) {
     const float transmission = clamp(material.params.z, 0.0, 1.0);
     const float ior = max(material.params.w, 1.0);
     const float anisotropy = clamp(material.params2.x, 0.0, 0.95);
+
+    // Base colour and emission are factor * texture (the texture slot returns
+    // white when unused, so the factor passes through).
+    const float3 base_color = material.base_color.rgb * sample_texture_or_white(material.textures.x, uv);
+    bsdf.emission = material.emission.rgb * sample_texture_or_white(material.textures.w, uv);
 
     bsdf.frame = frame_from_normal_tangent(normal, anisotropic_tangent(normal));
 
@@ -108,7 +114,7 @@ Bsdf make_bsdf(GpuMaterial material, float3 normal, bool front_face) {
     if (bsdf.transmissive) {
         // eta_i / eta_t: entering (front face) from air, or exiting from the glass.
         bsdf.eta = front_face ? (1.0 / ior) : ior;
-        bsdf.transmission_color = material.base_color.rgb;
+        bsdf.transmission_color = base_color;
         bsdf.diffuse_albedo = float3(0.0, 0.0, 0.0);
         bsdf.f0 = float3(0.0, 0.0, 0.0);
         bsdf.p_spec = 1.0;
@@ -118,8 +124,8 @@ Bsdf make_bsdf(GpuMaterial material, float3 normal, bool front_face) {
     bsdf.transmissive = false;
     bsdf.eta = 1.0;
     bsdf.transmission_color = float3(0.0, 0.0, 0.0);
-    bsdf.diffuse_albedo = material.base_color.rgb * (1.0 - metallic);
-    bsdf.f0 = lerp(float3(0.04, 0.04, 0.04), material.base_color.rgb, metallic);
+    bsdf.diffuse_albedo = base_color * (1.0 - metallic);
+    bsdf.f0 = lerp(float3(0.04, 0.04, 0.04), base_color, metallic);
 
     const float specular_weight = luminance(bsdf.f0);
     const float diffuse_weight = luminance(bsdf.diffuse_albedo);

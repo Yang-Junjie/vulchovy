@@ -52,6 +52,10 @@ public:
     const Environment& environment() const { return environment_; }
     float environment_pdf_scale() const { return env_pdf_scale_; }
 
+    const std::vector<vulcao::ImageView>& texture_views() const { return texture_views_; }
+    const vulcao::ImageView& fallback_texture_view() const { return fallback_texture_view_; }
+    const vulcao::Sampler& texture_sampler() const { return texture_sampler_; }
+
     uint32_t material_count() const { return material_count_; }
     uint32_t light_count() const { return light_count_; }
     uint32_t instance_count() const { return instance_count_; }
@@ -80,6 +84,13 @@ private:
     vulcao::Buffer env_marginal_;
     vulcao::Buffer env_conditional_;
     float env_pdf_scale_ = 0.0f;
+
+    // Texture array (images declared before views so views are destroyed first).
+    vulcao::Sampler texture_sampler_;
+    std::vector<vulcao::Image> texture_images_;
+    std::vector<vulcao::ImageView> texture_views_;
+    vulcao::Image fallback_texture_image_;
+    vulcao::ImageView fallback_texture_view_;
 
     SceneDescriptors scene_descriptors_;
 

@@ -6,6 +6,7 @@
 // basis vectors to avoid depending on matrix memory layout conventions.
 
 static const float kPi = 3.14159265358979;
+static const uint kMaxSceneTextures = 64;
 
 struct Vertex {
     float3 position;
@@ -18,6 +19,7 @@ struct GpuMaterial {
     float4 emission;
     float4 params;  // x = metallic, y = roughness, z = transmission, w = ior
     float4 params2; // x = anisotropy
+    int4 textures;  // x = base color, y = metal-rough, z = normal, w = emissive
 };
 
 struct GpuLight {
@@ -43,6 +45,17 @@ struct GpuInstance {
 [[vk::binding(2, 0)]] StructuredBuffer<uint> g_indices;
 [[vk::binding(3, 0)]] StructuredBuffer<Vertex> g_vertices;
 [[vk::binding(4, 0)]] StructuredBuffer<GpuInstance> g_instances;
+
+// Sampled texture array. Colour maps use an sRGB image format, so the hardware
+// decodes them to linear on sample; data maps use a linear format.
+[[vk::binding(8, 0)]] Sampler2D g_textures[kMaxSceneTextures];
+
+/// @brief Samples a texture slot, returning white when the slot is unused.
+float3 sample_texture_or_white(int index, float2 uv) {
+    if (index < 0)
+        return float3(1.0, 1.0, 1.0);
+    return g_textures[index].SampleLevel(uv, 0.0).rgb;
+}
 
 float3 instance_to_world_point(GpuInstance instance, float3 p) {
     return instance.to_world_x.xyz * p.x + instance.to_world_y.xyz * p.y +

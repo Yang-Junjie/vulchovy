@@ -1,6 +1,7 @@
 #include "scene/gpu_scene.h"
 
 #include <algorithm>
+#include <array>
 #include <span>
 
 #include <glm/gtc/matrix_inverse.hpp>
@@ -75,6 +76,9 @@ GpuScene::GpuScene(vulcao::Context& context, const Scene& scene, bool build_acce
             .params = vec4(material.metallic, material.roughness, material.transmission,
                            material.ior),
             .params2 = vec4(material.anisotropy, 0.0f, 0.0f, 0.0f),
+            .textures = glm::ivec4(material.base_color_texture,
+                                   material.metallic_roughness_texture,
+                                   material.normal_texture, material.emissive_texture),
         });
     }
     material_count_ = static_cast<uint32_t>(materials.size());
@@ -160,6 +164,35 @@ GpuScene::GpuScene(vulcao::Context& context, const Scene& scene, bool build_acce
         texels[i] = vec4(environment_.pixels[i], 1.0f);
     context.upload(environment_image_, texels.data(), texels.size() * sizeof(vec4),
                    vk::ImageLayout::eShaderReadOnlyOptimal, true);
+
+    // Sampled texture array. Every slot is written (unused ones fall back to a
+    // 1x1 white image) because a statically used descriptor array must be fully
+    // populated before it is bound.
+    texture_sampler_ = vulcao::Sampler::linear(context.device(), true);
+    texture_images_.reserve(scene.textures.size());
+    texture_views_.reserve(scene.textures.size());
+    for (const TextureData& texture : scene.textures) {
+        if (!texture.valid())
+            continue;
+        const vk::Format format =
+            texture.srgb ? vk::Format::eR8G8B8A8Srgb : vk::Format::eR8G8B8A8Unorm;
+        vulcao::Image image = vulcao::Image::create_2d(
+            context.allocator(), vk::Extent2D{texture.width, texture.height}, format,
+            vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst);
+        context.upload(image, texture.pixels.data(), texture.pixels.size(),
+                       vk::ImageLayout::eShaderReadOnlyOptimal, false);
+        texture_views_.push_back(vulcao::ImageView::create(context.device(), image));
+        texture_images_.push_back(std::move(image));
+    }
+
+    const std::array<uint8_t, 4> white{255, 255, 255, 255};
+    fallback_texture_image_ = vulcao::Image::create_2d(
+        context.allocator(), vk::Extent2D{1, 1}, vk::Format::eR8G8B8A8Unorm,
+        vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst);
+    context.upload(fallback_texture_image_, white.data(), white.size(),
+                   vk::ImageLayout::eShaderReadOnlyOptimal, false);
+    fallback_texture_view_ =
+        vulcao::ImageView::create(context.device(), fallback_texture_image_);
 
     scene_descriptors_ = SceneDescriptors(context.device(), *this);
 

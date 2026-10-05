@@ -7,9 +7,13 @@
 #define TINYOBJLOADER_IMPLEMENTATION
 #include "tiny_obj_loader.h"
 
+#include "io/image.h"
+
 namespace vulchovy {
 
 namespace {
+
+constexpr int32_t kNoTexture = -1;
 
 float clamp01(float value) {
     return value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value);
@@ -33,6 +37,40 @@ Material convert_material(const tinyobj::material_t& source) {
     if (source.ior > 0.0f)
         material.ior = source.ior;
     return material;
+}
+
+/// @brief Loads (once) an RGBA8 texture and returns its index in the model.
+int32_t load_texture(ObjModel& model, std::unordered_map<std::string, int32_t>& cache,
+                     const std::filesystem::path& base_dir, const std::string& name, bool srgb) {
+    if (name.empty())
+        return kNoTexture;
+
+    const std::filesystem::path texture_path = base_dir / name;
+    const std::string key = texture_path.string();
+    if (const auto found = cache.find(key); found != cache.end())
+        return found->second;
+
+    ImageData image = load_image(texture_path, 4);
+    if (!image.valid())
+        return kNoTexture;
+
+    TextureData texture;
+    texture.width = image.width;
+    texture.height = image.height;
+    texture.srgb = srgb;
+    if (image.hdr) {
+        texture.pixels.resize(static_cast<size_t>(image.width) * image.height * 4);
+        for (size_t i = 0; i < texture.pixels.size(); ++i)
+            texture.pixels[i] =
+                static_cast<uint8_t>(clamp01(image.floats[i]) * 255.0f + 0.5f);
+    } else {
+        texture.pixels = std::move(image.bytes);
+    }
+
+    const int32_t index = static_cast<int32_t>(model.textures.size());
+    model.textures.push_back(std::move(texture));
+    cache.emplace(key, index);
+    return index;
 }
 
 } // namespace
@@ -60,8 +98,16 @@ ObjModel load_obj(const std::filesystem::path& path) {
         std::fprintf(stderr, "vulchovy: OBJ warning for '%s': %s\n", path.string().c_str(),
                      warn.c_str());
 
-    for (const tinyobj::material_t& material : source_materials)
-        model.materials.push_back(convert_material(material));
+    std::unordered_map<std::string, int32_t> texture_cache;
+    const std::filesystem::path texture_dir = path.parent_path();
+    for (const tinyobj::material_t& source : source_materials) {
+        Material material = convert_material(source);
+        material.base_color_texture =
+            load_texture(model, texture_cache, texture_dir, source.diffuse_texname, /*srgb=*/true);
+        material.emissive_texture = load_texture(model, texture_cache, texture_dir,
+                                                 source.emissive_texname, /*srgb=*/true);
+        model.materials.push_back(material);
+    }
     if (model.materials.empty())
         model.materials.push_back(Material{}); // fallback
 
@@ -170,8 +216,21 @@ ObjModel load_obj(const std::filesystem::path& path) {
 }
 
 uint32_t add_model(Scene& scene, const ObjModel& model, std::string name, const mat4& transform) {
+    const int32_t texture_base = static_cast<int32_t>(scene.textures.size());
+    scene.textures.insert(scene.textures.end(), model.textures.begin(), model.textures.end());
+
     const uint32_t material_base = static_cast<uint32_t>(scene.materials.size());
-    scene.materials.insert(scene.materials.end(), model.materials.begin(), model.materials.end());
+    for (Material material : model.materials) {
+        if (material.base_color_texture >= 0)
+            material.base_color_texture += texture_base;
+        if (material.metallic_roughness_texture >= 0)
+            material.metallic_roughness_texture += texture_base;
+        if (material.normal_texture >= 0)
+            material.normal_texture += texture_base;
+        if (material.emissive_texture >= 0)
+            material.emissive_texture += texture_base;
+        scene.materials.push_back(material);
+    }
 
     Node node;
     node.name = std::move(name);

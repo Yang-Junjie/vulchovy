@@ -13,6 +13,7 @@ namespace vulchovy {
 struct ObjModel {
     std::vector<Mesh> meshes;
     std::vector<Material> materials;
+    std::vector<TextureData> textures;   // material texture indices index into this
     std::vector<uint32_t> mesh_material; // parallel to meshes, indexes into materials
 };
 
