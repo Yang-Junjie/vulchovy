@@ -28,6 +28,14 @@ add_subdirectory(third_party/vulcao)
 add_library(stb INTERFACE)
 target_include_directories(stb INTERFACE ${CMAKE_SOURCE_DIR}/third_party/stb)
 
+# --- tinyobjloader / nlohmann-json (vendored, header only) -------------------
+
+add_library(tinyobjloader INTERFACE)
+target_include_directories(tinyobjloader INTERFACE ${CMAKE_SOURCE_DIR}/third_party/tinyobjloader)
+
+add_library(nlohmann_json INTERFACE)
+target_include_directories(nlohmann_json INTERFACE ${CMAKE_SOURCE_DIR}/third_party/nlohmann)
+
 # --- third party (fetched) ---------------------------------------------------
 
 include(FetchContent)
@@ -60,6 +68,8 @@ add_library(vulchovy_core STATIC
     src/camera/orbit_camera_controller.cpp
     src/camera/perspective_camera.cpp
     src/io/image.cpp
+    src/io/obj.cpp
+    src/io/scene_io.cpp
     src/platform/input.cpp
     src/platform/window.cpp
     src/render/display_pass.cpp
@@ -93,7 +103,7 @@ target_link_libraries(vulchovy_core PUBLIC
     glm::glm
 )
 
-target_link_libraries(vulchovy_core PRIVATE glfw stb)
+target_link_libraries(vulchovy_core PRIVATE glfw stb tinyobjloader nlohmann_json)
 
 target_compile_options(vulchovy_core PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall -Wextra -Wpedantic>)

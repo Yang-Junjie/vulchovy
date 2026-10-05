@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 
 #include <vulcao/context.h>
@@ -8,6 +9,7 @@
 
 #include "camera/orbit_camera_controller.h"
 #include "camera/perspective_camera.h"
+#include "io/scene_io.h"
 #include "platform/window.h"
 #include "render/display_pass.h"
 #include "render/integrators/integrator.h"
@@ -20,7 +22,9 @@ namespace vulchovy {
 ///        statically selected integrator, and drives the frame loop.
 class Application {
 public:
-    Application();
+    /// @param scene_path Optional `.json` scene or `.obj` model to load; the
+    ///        built-in demo is used when empty.
+    explicit Application(std::filesystem::path scene_path = {});
     ~Application();
 
     Application(const Application&) = delete;
@@ -34,6 +38,8 @@ private:
     bool update_camera(float dt);
     void update_window_title();
     void draw_frame();
+    void load_scene(const std::filesystem::path& path);
+    void save_scene();
 
     Window window_;
     vulcao::Context context_;
@@ -48,6 +54,8 @@ private:
     std::unique_ptr<PerspectiveCamera> camera_;
     std::unique_ptr<OrbitCameraController> controller_;
     Scene scene_;
+    SceneDescription description_;
+    std::filesystem::path scene_path_;
 
     uint32_t frame_index_ = 0;
     double last_time_ = 0.0;

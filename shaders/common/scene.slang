@@ -10,6 +10,7 @@ static const float kPi = 3.14159265358979;
 struct Vertex {
     float3 position;
     float3 normal;
+    float2 uv;
 };
 
 struct GpuMaterial {

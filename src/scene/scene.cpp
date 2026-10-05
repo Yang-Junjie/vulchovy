@@ -6,6 +6,40 @@
 
 namespace vulchovy {
 
+mat4 node_world_transform(const Scene& scene, uint32_t node) {
+    mat4 world = scene.nodes[node].local_transform;
+    int32_t parent = scene.nodes[node].parent;
+    while (parent >= 0 && static_cast<size_t>(parent) < scene.nodes.size()) {
+        world = scene.nodes[parent].local_transform * world;
+        parent = scene.nodes[parent].parent;
+    }
+    return world;
+}
+
+Aabb scene_bounds(const Scene& scene) {
+    Aabb bounds;
+    for (uint32_t node_index = 0; node_index < scene.nodes.size(); ++node_index) {
+        const Node& node = scene.nodes[node_index];
+        if (node.primitives.empty())
+            continue;
+        const mat4 world = node_world_transform(scene, node_index);
+        for (const Primitive& primitive : node.primitives) {
+            if (primitive.mesh >= scene.meshes.size())
+                continue;
+            const Aabb local = mesh_bounds(scene.meshes[primitive.mesh]);
+            if (!local.valid())
+                continue;
+            for (int corner = 0; corner < 8; ++corner) {
+                const vec3 point{(corner & 1) ? local.max.x : local.min.x,
+                                 (corner & 2) ? local.max.y : local.min.y,
+                                 (corner & 4) ? local.max.z : local.min.z};
+                bounds.extend(vec3(world * vec4{point, 1.0f}));
+            }
+        }
+    }
+    return bounds;
+}
+
 Scene make_default_scene() {
     Scene scene;
 
@@ -23,9 +57,9 @@ Scene make_default_scene() {
     scene.materials.push_back(Material{
         .base_color = vec3{1.0f, 1.0f, 1.0f},
         .metallic = 0.0f,
-        .roughness = 0.0f,
+        .roughness = 0.18f,
         .transmission = 1.0f,
-        .ior = 1.5f}); // glass
+        .ior = 1.5f}); // frosted glass
     scene.materials.push_back(Material{
         .base_color = vec3{0.2f, 0.6f, 0.9f},
         .metallic = 1.0f,
@@ -41,32 +75,21 @@ Scene make_default_scene() {
         .radius = 0.7f,
     });
 
-    scene.instances.push_back(Instance{.mesh_index = 1, .material_index = 0});
-    scene.instances.push_back(Instance{
-        .mesh_index = 0,
-        .material_index = 1,
-        .transform = glm::translate(mat4{1.0f}, vec3{-4.4f, 1.0f, 0.0f}),
-    });
-    scene.instances.push_back(Instance{
-        .mesh_index = 0,
-        .material_index = 2,
-        .transform = glm::translate(mat4{1.0f}, vec3{-2.2f, 1.0f, 0.0f}),
-    });
-    scene.instances.push_back(Instance{
-        .mesh_index = 0,
-        .material_index = 3,
-        .transform = glm::translate(mat4{1.0f}, vec3{0.0f, 1.0f, 0.0f}),
-    });
-    scene.instances.push_back(Instance{
-        .mesh_index = 0,
-        .material_index = 4,
-        .transform = glm::translate(mat4{1.0f}, vec3{2.2f, 1.0f, 0.0f}),
-    });
-    scene.instances.push_back(Instance{
-        .mesh_index = 0,
-        .material_index = 5,
-        .transform = glm::translate(mat4{1.0f}, vec3{4.4f, 1.0f, 0.0f}),
-    });
+    auto add_node = [&scene](std::string name, uint32_t mesh, uint32_t material,
+                             const mat4& transform) {
+        Node node;
+        node.name = std::move(name);
+        node.local_transform = transform;
+        node.primitives.push_back(Primitive{.mesh = mesh, .material = material});
+        scene.nodes.push_back(std::move(node));
+    };
+
+    add_node("ground", 1, 0, mat4{1.0f});
+    add_node("red", 0, 1, glm::translate(mat4{1.0f}, vec3{-4.4f, 1.0f, 0.0f}));
+    add_node("gold", 0, 2, glm::translate(mat4{1.0f}, vec3{-2.2f, 1.0f, 0.0f}));
+    add_node("glass", 0, 3, glm::translate(mat4{1.0f}, vec3{0.0f, 1.0f, 0.0f}));
+    add_node("blue", 0, 4, glm::translate(mat4{1.0f}, vec3{2.2f, 1.0f, 0.0f}));
+    add_node("white", 0, 5, glm::translate(mat4{1.0f}, vec3{4.4f, 1.0f, 0.0f}));
 
     // HDR environment (image-based lighting). Falls back to a procedural sky
     // when the asset is unavailable so the renderer still runs.

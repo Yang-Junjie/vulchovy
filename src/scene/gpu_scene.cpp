@@ -23,6 +23,27 @@ vk::BufferUsageFlags geometry_usage(bool build_acceleration_structures) {
 
 constexpr vk::BufferUsageFlags kSceneBufferUsage = vk::BufferUsageFlagBits::eStorageBuffer;
 
+/// @brief A node's primitive flattened to its world transform (what the TLAS and
+///        the instance buffer consume).
+struct DrawInstance {
+    mat4 transform{1.0f};
+    uint32_t mesh = 0;
+    uint32_t material = 0;
+};
+
+std::vector<DrawInstance> flatten_nodes(const Scene& scene) {
+    std::vector<DrawInstance> draw_instances;
+    for (uint32_t node_index = 0; node_index < scene.nodes.size(); ++node_index) {
+        const Node& node = scene.nodes[node_index];
+        if (node.primitives.empty())
+            continue;
+        const mat4 world = node_world_transform(scene, node_index);
+        for (const Primitive& primitive : node.primitives)
+            draw_instances.push_back(DrawInstance{world, primitive.mesh, primitive.material});
+    }
+    return draw_instances;
+}
+
 } // namespace
 
 GpuScene::GpuScene(vulcao::Context& context, const Scene& scene, bool build_acceleration_structures) {
@@ -71,11 +92,12 @@ GpuScene::GpuScene(vulcao::Context& context, const Scene& scene, bool build_acce
     light_count_ = static_cast<uint32_t>(lights.size());
     lights_ = vulcao::Buffer::create_with_data(context, lights, kSceneBufferUsage);
 
+    const std::vector<DrawInstance> draw_instances = flatten_nodes(scene);
     std::vector<GpuInstance> instances;
-    instances.reserve(scene.instances.size());
-    for (const Instance& instance : scene.instances) {
-        const MeshRange& range = ranges.at(instance.mesh_index);
-        const mat4& to_world = instance.transform;
+    instances.reserve(draw_instances.size());
+    for (const DrawInstance& draw : draw_instances) {
+        const MeshRange& range = ranges.at(draw.mesh);
+        const mat4& to_world = draw.transform;
         const mat4 to_object = glm::inverse(to_world);
         instances.push_back(GpuInstance{
             .to_world_x = to_world[0],
@@ -87,7 +109,7 @@ GpuScene::GpuScene(vulcao::Context& context, const Scene& scene, bool build_acce
             .to_object_z = to_object[2],
             .to_object_t = to_object[3],
             .geometry = glm::uvec4(range.vertex_offset, range.index_offset, range.index_count,
-                                   instance.material_index),
+                                   draw.material),
         });
     }
     instance_count_ = static_cast<uint32_t>(instances.size());
@@ -168,14 +190,14 @@ GpuScene::GpuScene(vulcao::Context& context, const Scene& scene, bool build_acce
                                              std::span(&geometries[mesh_index], 1));
     });
 
-    // One top level instance per scene object.
+    // One top level instance per flattened node primitive.
     std::vector<vulcao::AccelerationStructureInstance> tlas_instances;
-    tlas_instances.reserve(scene.instances.size());
-    for (size_t i = 0; i < scene.instances.size(); ++i) {
-        const Instance& instance = scene.instances[i];
-        const mat4& m = instance.transform;
+    tlas_instances.reserve(draw_instances.size());
+    for (size_t i = 0; i < draw_instances.size(); ++i) {
+        const DrawInstance& draw = draw_instances[i];
+        const mat4& m = draw.transform;
         vulcao::AccelerationStructureInstance tlas_instance;
-        tlas_instance.acceleration_structure = blas_[instance.mesh_index].handle();
+        tlas_instance.acceleration_structure = blas_[draw.mesh].handle();
         tlas_instance.instance_custom_index = static_cast<uint32_t>(i);
         tlas_instance.mask = 0xFF;
         tlas_instance.transform = {m[0][0], m[1][0], m[2][0], m[3][0],

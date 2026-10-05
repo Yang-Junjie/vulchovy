@@ -1,6 +1,10 @@
 #include "app/application.h"
 
+#include <algorithm>
+#include <cstdio>
 #include <string>
+
+#include <GLFW/glfw3.h>
 
 #include "render/integrators/compute/whitted.h"
 #include "render/integrators/ray_query/path_tracer.h"
@@ -44,11 +48,68 @@ std::unique_ptr<Integrator> make_integrator(vulcao::Context& context, const GpuS
 
 } // namespace
 
-Application::Application()
+Application::Application(std::filesystem::path scene_path)
     : window_(1280, 720, "vulchovy"), context_(make_context_info(window_)),
-      camera_(std::make_unique<PerspectiveCamera>()), scene_(make_default_scene()) {
+      camera_(std::make_unique<PerspectiveCamera>()), scene_path_(std::move(scene_path)) {
+    load_scene(scene_path_);
     init_vulkan();
     last_time_ = window_.time();
+}
+
+void Application::load_scene(const std::filesystem::path& path) {
+    description_ = default_scene_description();
+
+    bool loaded = false;
+    bool is_scene_file = false;
+    if (!path.empty()) {
+        const std::string extension = path.extension().string();
+        is_scene_file = extension == ".json" || extension == ".scene";
+        if (is_scene_file) {
+            description_ = load_scene_description(path);
+        } else {
+            ModelPlacement placement;
+            placement.path = path.string();
+            placement.name = path.stem().string();
+            description_.models.push_back(std::move(placement));
+        }
+        scene_ = build_scene(description_);
+        loaded = !scene_.nodes.empty();
+    }
+
+    if (!loaded) {
+        scene_ = make_default_scene();
+        description_ = default_scene_description();
+        return;
+    }
+
+    const Aabb bounds = scene_bounds(scene_);
+    if (is_scene_file) {
+        // A scene file stores its own camera.
+        camera_->set_pose(description_.camera.position, description_.camera.target,
+                          description_.camera.up);
+        camera_->set_vertical_fov(description_.camera.vertical_fov_degrees);
+    } else if (bounds.valid()) {
+        // Frame a freshly imported model with the camera before the orbit
+        // controller is built from the current pose.
+        const vec3 center = bounds.center();
+        const float radius = std::max(bounds.radius(), 0.05f);
+        camera_->set_pose(center + vec3{0.0f, 0.6f * radius, 2.8f * radius}, center);
+        description_.camera.position = camera_->position();
+        description_.camera.target = center;
+    }
+}
+
+void Application::save_scene() {
+    description_.camera.position = camera_->position();
+    description_.camera.target = camera_->target();
+    description_.camera.up = camera_->up();
+    description_.camera.vertical_fov_degrees = camera_->vertical_fov_degrees();
+
+    std::filesystem::path out = scene_path_;
+    if (out.empty() || out.extension() != ".json")
+        out = "scene.json";
+    if (save_scene_description(description_, out))
+        std::fprintf(stderr, "vulchovy: saved scene to '%s'\n", out.string().c_str());
 }
 
 Application::~Application() {
@@ -75,6 +136,9 @@ void Application::init_vulkan() {
 void Application::run() {
     while (!window_.should_close()) {
         window_.poll_events();
+
+        if (window_.input().key_pressed(GLFW_KEY_F5))
+            save_scene();
 
         const vk::Extent2D extent = window_.framebuffer_extent();
         if (extent.width == 0 || extent.height == 0)
@@ -111,7 +175,10 @@ bool Application::update_camera(float dt) {
 }
 
 void Application::update_window_title() {
-    window_.set_title(("vulchovy - " + std::string(integrator_->name())).c_str());
+    std::string title = "vulchovy - " + std::string(integrator_->name());
+    if (!scene_path_.empty())
+        title += " - " + scene_path_.filename().string();
+    window_.set_title(title.c_str());
 }
 
 void Application::draw_frame() {
