@@ -2,8 +2,11 @@
 
 // Physically based BSDF, structured after PBRT: a shading frame, a GGX
 // microfacet distribution sampled through the visible-normal distribution
-// (Heitz 2018), Schlick Fresnel and Smith masking-shadowing, combined with a
-// Lambertian diffuse lobe for the metallic-roughness material model.
+// (Heitz 2018), Schlick Fresnel for conductors, and height-correlated Smith
+// masking-shadowing. Opaque surfaces combine a Lambertian diffuse lobe with a
+// GGX conductor lobe (metallic-roughness); transmissive surfaces use a
+// microfacet dielectric (Walter et al. 2007) with an optional smooth/delta
+// special case.
 
 #include "common/scene.slang"
 #include "common/random.slang"
@@ -96,6 +99,11 @@ Bsdf make_bsdf(GpuMaterial material, float3 normal, bool front_face) {
 
     bsdf.frame = frame_from_normal_tangent(normal, anisotropic_tangent(normal));
 
+    const float alpha_iso = max(roughness * roughness, 1e-6);
+    const float aspect = sqrt(1.0 - anisotropy * 0.9);
+    bsdf.alpha = float2(max(alpha_iso / aspect, 1e-4), max(alpha_iso * aspect, 1e-4));
+    bsdf.specular_is_delta = roughness < 1e-3 && anisotropy < 1e-3;
+
     bsdf.transmissive = transmission > 0.0 && metallic <= 0.0;
     if (bsdf.transmissive) {
         // eta_i / eta_t: entering (front face) from air, or exiting from the glass.
@@ -103,19 +111,13 @@ Bsdf make_bsdf(GpuMaterial material, float3 normal, bool front_face) {
         bsdf.transmission_color = material.base_color.rgb;
         bsdf.diffuse_albedo = float3(0.0, 0.0, 0.0);
         bsdf.f0 = float3(0.0, 0.0, 0.0);
-        bsdf.alpha = float2(1.0, 1.0);
         bsdf.p_spec = 1.0;
-        bsdf.specular_is_delta = true;
         return bsdf;
     }
 
     bsdf.transmissive = false;
     bsdf.eta = 1.0;
     bsdf.transmission_color = float3(0.0, 0.0, 0.0);
-    bsdf.specular_is_delta = roughness < 1e-3 && anisotropy < 1e-3;
-    const float alpha_iso = max(roughness * roughness, 1e-6);
-    const float aspect = sqrt(1.0 - anisotropy * 0.9);
-    bsdf.alpha = float2(max(alpha_iso / aspect, 1e-4), max(alpha_iso * aspect, 1e-4));
     bsdf.diffuse_albedo = material.base_color.rgb * (1.0 - metallic);
     bsdf.f0 = lerp(float3(0.04, 0.04, 0.04), material.base_color.rgb, metallic);
 
@@ -164,6 +166,16 @@ float ggx_g1(float3 w, float2 alpha) {
     return 1.0 / (1.0 + ggx_lambda(w, alpha));
 }
 
+// Height-correlated Smith masking-shadowing (PBRT).
+float ggx_g2(float3 wo, float3 wi, float2 alpha) {
+    return 1.0 / (1.0 + ggx_lambda(wo, alpha) + ggx_lambda(wi, alpha));
+}
+
+// Visible-normal-distribution pdf of the half vector (PBRT TrowbridgeReitz::PDF).
+float ggx_pdf_h(float3 wo, float3 h, float2 alpha) {
+    return ggx_d(h, alpha) * ggx_g1(wo, alpha) * abs(dot(wo, h)) / max(wo.z, 1e-6);
+}
+
 // Visible-normal-distribution sampling (Heitz 2018), wo in the local frame.
 float3 ggx_sample_half(float3 wo, float2 alpha, float2 u) {
     const float3 vh = normalize(float3(alpha.x * wo.x, alpha.y * wo.y, wo.z));
@@ -182,9 +194,94 @@ float3 ggx_sample_half(float3 wo, float2 alpha, float2 u) {
     return normalize(float3(alpha.x * nh.x, alpha.y * nh.y, max(0.0, nh.z)));
 }
 
+// --- microfacet dielectric (Walter et al. 2007, as in PBRT) -----------------
+//
+// Local frame; wo.z > 0. pbrt_eta = eta_t / eta_i, the reciprocal of Bsdf::eta.
+
+// PBRT's Refract; returns false on total internal reflection.
+bool mf_refract(float3 wo, float3 wm, float pbrt_eta, out float etap, out float3 wi) {
+    float eta = pbrt_eta;
+    float3 n = wm;
+    float cos_i = dot(n, wo);
+    if (cos_i < 0.0) {
+        eta = 1.0 / eta;
+        cos_i = -cos_i;
+        n = -n;
+    }
+    const float sin2_i = max(0.0, 1.0 - cos_i * cos_i);
+    const float sin2_t = sin2_i / (eta * eta);
+    if (sin2_t >= 1.0) {
+        etap = eta;
+        wi = float3(0.0, 0.0, 1.0);
+        return false;
+    }
+    const float cos_t = sqrt(1.0 - sin2_t);
+    wi = -wo / eta + (cos_i / eta - cos_t) * n;
+    etap = eta;
+    return true;
+}
+
+float3 dielectric_eval(Bsdf bsdf, float3 wo, float3 wi) {
+    const float pbrt_eta = 1.0 / bsdf.eta;
+    const float cos_o = wo.z;
+    const float cos_i = wi.z;
+    const bool reflect = cos_i * cos_o > 0.0;
+    const float etap = reflect ? 1.0 : pbrt_eta;
+
+    float3 wm = wi * etap + wo;
+    if (dot(wm, wm) == 0.0)
+        return float3(0.0, 0.0, 0.0);
+    wm = normalize(wm);
+    if (wm.z < 0.0)
+        wm = -wm;
+    if (dot(wm, wi) * cos_i < 0.0 || dot(wm, wo) * cos_o < 0.0)
+        return float3(0.0, 0.0, 0.0);
+
+    const float F = fresnel_dielectric(abs(dot(wo, wm)), bsdf.eta);
+    const float d = ggx_d(wm, bsdf.alpha);
+    const float g = ggx_g2(wo, wi, bsdf.alpha);
+    if (reflect)
+        return d * g * F / abs(4.0 * cos_i * cos_o);
+
+    const float denom = pow(dot(wi, wm) + dot(wo, wm) / etap, 2.0) * cos_i * cos_o;
+    float3 ft = d * (1.0 - F) * g * abs(dot(wi, wm) * dot(wo, wm) / denom);
+    return bsdf.transmission_color * ft / (etap * etap);
+}
+
+float dielectric_pdf(Bsdf bsdf, float3 wo, float3 wi) {
+    const float pbrt_eta = 1.0 / bsdf.eta;
+    const float cos_o = wo.z;
+    const float cos_i = wi.z;
+    const bool reflect = cos_i * cos_o > 0.0;
+    const float etap = reflect ? 1.0 : pbrt_eta;
+
+    float3 wm = wi * etap + wo;
+    if (dot(wm, wm) == 0.0)
+        return 0.0;
+    wm = normalize(wm);
+    if (wm.z < 0.0)
+        wm = -wm;
+    if (dot(wm, wi) * cos_i < 0.0 || dot(wm, wo) * cos_o < 0.0)
+        return 0.0;
+
+    const float F = fresnel_dielectric(abs(dot(wo, wm)), bsdf.eta);
+    if (reflect)
+        return ggx_pdf_h(wo, wm, bsdf.alpha) / (4.0 * abs(dot(wo, wm))) * F;
+
+    const float denom = pow(dot(wi, wm) + dot(wo, wm) / etap, 2.0);
+    const float dwm_dwi = abs(dot(wi, wm)) / denom;
+    return ggx_pdf_h(wo, wm, bsdf.alpha) * dwm_dwi * (1.0 - F);
+}
+
 // --- combined BSDF ----------------------------------------------------------
 
 float3 bsdf_eval(Bsdf bsdf, float3 wo, float3 wi) {
+    if (bsdf.transmissive) {
+        if (bsdf.specular_is_delta)
+            return float3(0.0, 0.0, 0.0);
+        return dielectric_eval(bsdf, wo, wi);
+    }
+
     if (wo.z <= 0.0 || wi.z <= 0.0)
         return float3(0.0, 0.0, 0.0);
 
@@ -197,7 +294,7 @@ float3 bsdf_eval(Bsdf bsdf, float3 wo, float3 wi) {
         if (h.z > 0.0) {
             const float3 fr = fresnel_schlick(dot(wo, h), bsdf.f0);
             const float d = ggx_d(h, bsdf.alpha);
-            const float g = ggx_g1(wo, bsdf.alpha) * ggx_g1(wi, bsdf.alpha);
+            const float g = ggx_g2(wo, wi, bsdf.alpha);
             f += fr * d * g / (4.0 * wo.z * wi.z);
         }
     }
@@ -205,6 +302,12 @@ float3 bsdf_eval(Bsdf bsdf, float3 wo, float3 wi) {
 }
 
 float bsdf_pdf(Bsdf bsdf, float3 wo, float3 wi) {
+    if (bsdf.transmissive) {
+        if (bsdf.specular_is_delta)
+            return 0.0;
+        return dielectric_pdf(bsdf, wo, wi);
+    }
+
     if (wo.z <= 0.0 || wi.z <= 0.0)
         return 0.0;
 
@@ -237,29 +340,58 @@ float3 bsdf_sample(Bsdf bsdf, float3 wo, inout Rng rng, out float3 wi, out float
     delta = false;
 
     if (bsdf.transmissive) {
-        const float eta = bsdf.eta;
-        const float reflectance = fresnel_dielectric(wo.z, eta);
-        if (rng_float(rng) < reflectance) {
-            wi = float3(-wo.x, -wo.y, wo.z);
+        if (bsdf.specular_is_delta) {
+            const float eta = bsdf.eta;
+            const float reflectance = fresnel_dielectric(wo.z, eta);
+            if (rng_float(rng) < reflectance) {
+                wi = float3(-wo.x, -wo.y, wo.z);
+                delta = true;
+                pdf = 0.0;
+                return float3(1.0, 1.0, 1.0);
+            }
+
+            const float k = 1.0 - eta * eta * (1.0 - wo.z * wo.z);
+            if (k < 0.0) {
+                // Total internal reflection.
+                wi = float3(-wo.x, -wo.y, wo.z);
+                delta = true;
+                pdf = 0.0;
+                return float3(1.0, 1.0, 1.0);
+            }
+
+            const float cos_t = sqrt(k);
+            wi = float3(-eta * wo.x, -eta * wo.y, -cos_t);
             delta = true;
             pdf = 0.0;
-            return float3(1.0, 1.0, 1.0);
+            return bsdf.transmission_color * (1.0 / (eta * eta));
         }
 
-        const float k = 1.0 - eta * eta * (1.0 - wo.z * wo.z);
-        if (k < 0.0) {
-            // Total internal reflection.
-            wi = float3(-wo.x, -wo.y, wo.z);
-            delta = true;
+        // Rough dielectric: sample the visible normal distribution, then reflect
+        // or refract about the microfacet normal (Walter et al. 2007).
+        const float3 wm = ggx_sample_half(wo, bsdf.alpha, rng_float2(rng));
+        const float F = fresnel_dielectric(abs(dot(wo, wm)), bsdf.eta);
+        if (rng_float(rng) < F) {
+            wi = -wo + 2.0 * dot(wo, wm) * wm;
+            if (wi.z <= 0.0) {
+                wi = float3(0.0, 0.0, 1.0);
+                pdf = 0.0;
+                return float3(0.0, 0.0, 0.0);
+            }
+            pdf = ggx_pdf_h(wo, wm, bsdf.alpha) / (4.0 * abs(dot(wo, wm))) * F;
+            return dielectric_eval(bsdf, wo, wi);
+        }
+
+        float etap;
+        float3 refracted;
+        if (!mf_refract(wo, wm, 1.0 / bsdf.eta, etap, refracted) || refracted.z >= 0.0) {
+            wi = float3(0.0, 0.0, 1.0);
             pdf = 0.0;
-            return float3(1.0, 1.0, 1.0);
+            return float3(0.0, 0.0, 0.0);
         }
-
-        const float cos_t = sqrt(k);
-        wi = float3(-eta * wo.x, -eta * wo.y, -cos_t);
-        delta = true;
-        pdf = 0.0;
-        return bsdf.transmission_color * (1.0 / (eta * eta));
+        wi = refracted;
+        const float denom = pow(dot(wi, wm) + dot(wo, wm) / etap, 2.0);
+        pdf = ggx_pdf_h(wo, wm, bsdf.alpha) * abs(dot(wi, wm)) / denom * (1.0 - F);
+        return dielectric_eval(bsdf, wo, wi);
     }
 
     for (int attempt = 0; attempt < 8; ++attempt) {

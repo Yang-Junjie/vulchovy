@@ -323,6 +323,7 @@ void computeMain(uint3 thread_id : SV_DispatchThreadID) {
     float3 throughput = float3(1.0, 1.0, 1.0);
     float previous_bsdf_pdf = 1.0;
     bool previous_delta = false;
+    bool previous_transmission = false;
     bool primary = true;
 
     for (uint depth = 0; depth < max_depth; ++depth) {
@@ -333,7 +334,7 @@ void computeMain(uint3 thread_id : SV_DispatchThreadID) {
                 const float3 radiance_env =
                     env_radiance(direction, g_uniforms.env.x, g_uniforms.env.y);
                 float weight = 1.0;
-                if (!primary && !previous_delta) {
+                if (!primary && !previous_delta && !previous_transmission) {
                     const float env_pdf_value =
                         g_uniforms.env.w *
                         env_pdf(direction, g_uniforms.env.y, g_uniforms.env.z);
@@ -356,7 +357,9 @@ void computeMain(uint3 thread_id : SV_DispatchThreadID) {
                     sphere_light_pdf(origin, light.position.xyz, light.params.x, direction) /
                     float(g_uniforms.counts.y);
                 const float weight =
-                    previous_delta ? 1.0 : power_heuristic(previous_bsdf_pdf, light_pdf);
+                    (previous_delta || previous_transmission)
+                        ? 1.0
+                        : power_heuristic(previous_bsdf_pdf, light_pdf);
                 radiance += throughput * hit.emission * weight;
             }
             break;
@@ -382,12 +385,15 @@ void computeMain(uint3 thread_id : SV_DispatchThreadID) {
             throughput *= f;
             previous_bsdf_pdf = 0.0;
             previous_delta = true;
+            previous_transmission = false;
         } else {
-            if (pdf <= 0.0 || wi.z <= 0.0)
+            if (pdf <= 0.0)
                 break;
-            throughput *= f * wi.z / pdf;
+            // |wi.z| because a transmitted direction points below the surface.
+            throughput *= f * abs(wi.z) / pdf;
             previous_bsdf_pdf = pdf;
             previous_delta = false;
+            previous_transmission = wi.z < 0.0;
         }
 
         direction = frame_to_world(bsdf.frame, wi);
