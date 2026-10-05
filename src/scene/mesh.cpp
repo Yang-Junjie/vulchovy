@@ -61,6 +61,7 @@ Mesh make_uv_sphere(float radius, uint32_t segments, uint32_t rings) {
         }
     }
 
+    compute_tangents(mesh);
     return mesh;
 }
 
@@ -89,6 +90,7 @@ Mesh make_plane(float size, float y) {
         mesh.vertices.push_back(vertex);
     }
     mesh.indices = {0, 1, 2, 0, 2, 3};
+    compute_tangents(mesh);
     return mesh;
 }
 
@@ -121,6 +123,52 @@ Aabb mesh_bounds(const Mesh& mesh) {
     for (const Vertex& vertex : mesh.vertices)
         bounds.extend(vertex.position);
     return bounds;
+}
+
+void compute_tangents(Mesh& mesh) {
+    std::vector<vec3> tangent_accum(mesh.vertices.size(), vec3{0.0f});
+    std::vector<vec3> bitangent_accum(mesh.vertices.size(), vec3{0.0f});
+
+    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+        const uint32_t a = mesh.indices[i + 0];
+        const uint32_t b = mesh.indices[i + 1];
+        const uint32_t c = mesh.indices[i + 2];
+        const Vertex& va = mesh.vertices[a];
+        const Vertex& vb = mesh.vertices[b];
+        const Vertex& vc = mesh.vertices[c];
+
+        const vec3 edge1 = vb.position - va.position;
+        const vec3 edge2 = vc.position - va.position;
+        const vec2 delta1 = vb.uv - va.uv;
+        const vec2 delta2 = vc.uv - va.uv;
+
+        const float denom = delta1.x * delta2.y - delta2.x * delta1.y;
+        if (std::abs(denom) < 1e-12f)
+            continue;
+        const float r = 1.0f / denom;
+        const vec3 tangent = (edge1 * delta2.y - edge2 * delta1.y) * r;
+        const vec3 bitangent = (edge2 * delta1.x - edge1 * delta2.x) * r;
+
+        tangent_accum[a] += tangent;
+        tangent_accum[b] += tangent;
+        tangent_accum[c] += tangent;
+        bitangent_accum[a] += bitangent;
+        bitangent_accum[b] += bitangent;
+        bitangent_accum[c] += bitangent;
+    }
+
+    for (size_t i = 0; i < mesh.vertices.size(); ++i) {
+        const vec3 n = mesh.vertices[i].normal;
+        vec3 t = tangent_accum[i] - n * dot(n, tangent_accum[i]); // Gram-Schmidt
+        const float len = length(t);
+        if (len > 1e-8f) {
+            mesh.vertices[i].tangent = t / len;
+        } else if (std::abs(n.y) < 0.999f) {
+            mesh.vertices[i].tangent = normalize(cross(vec3{0.0f, 1.0f, 0.0f}, n));
+        } else {
+            mesh.vertices[i].tangent = normalize(cross(vec3{1.0f, 0.0f, 0.0f}, n));
+        }
+    }
 }
 
 } // namespace vulchovy

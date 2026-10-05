@@ -21,9 +21,11 @@ struct Vertex {
     float padding1 = 0.0f;
     vec2 uv{0.0f, 0.0f};
     vec2 padding2{0.0f, 0.0f};
+    vec3 tangent{1.0f, 0.0f, 0.0f};
+    float padding3 = 0.0f;
 };
 
-static_assert(sizeof(Vertex) == 48, "Vertex must match the std430 layout");
+static_assert(sizeof(Vertex) == 64, "Vertex must match the std430 layout");
 
 struct Mesh {
     std::vector<Vertex> vertices;
@@ -50,6 +52,10 @@ Mesh make_plane(float size, float y = 0.0f);
 
 /// @brief Overwrites the normals with area-weighted, smooth vertex normals.
 void compute_smooth_normals(Mesh& mesh);
+
+/// @brief Overwrites the tangents from the UV parametrisation (Lengyel's method),
+///        orthonormalised against the existing normals.
+void compute_tangents(Mesh& mesh);
 
 /// @brief Bounding box of a mesh's positions.
 Aabb mesh_bounds(const Mesh& mesh);

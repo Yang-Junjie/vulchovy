@@ -1,5 +1,6 @@
 #include "io/obj.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <unordered_map>
@@ -73,6 +74,73 @@ int32_t load_texture(ObjModel& model, std::unordered_map<std::string, int32_t>& 
     return index;
 }
 
+uint8_t sample_red(const ImageData& image, uint32_t x, uint32_t y) {
+    if (!image.valid() || image.channels < 1)
+        return 255;
+    const size_t index = (static_cast<size_t>(y) * image.width + x) * image.channels;
+    if (image.hdr)
+        return static_cast<uint8_t>(clamp01(image.floats[index]) * 255.0f + 0.5f);
+    return image.bytes[index];
+}
+
+/// @brief Packs an MTL roughness map (map_Pr) and metallic map (map_Pm) into a
+///        single RGBA8 texture (G = roughness, B = metallic) as the shader
+///        expects, resampling the smaller map with nearest neighbours.
+int32_t load_metallic_roughness(ObjModel& model,
+                                std::unordered_map<std::string, int32_t>& cache,
+                                const std::filesystem::path& base_dir,
+                                const std::string& roughness_name,
+                                const std::string& metallic_name) {
+    if (roughness_name.empty() && metallic_name.empty())
+        return kNoTexture;
+
+    const std::string key = roughness_name + "|" + metallic_name;
+    if (const auto found = cache.find(key); found != cache.end())
+        return found->second;
+
+    const ImageData roughness =
+        roughness_name.empty() ? ImageData{} : load_image(base_dir / roughness_name, 4);
+    const ImageData metallic =
+        metallic_name.empty() ? ImageData{} : load_image(base_dir / metallic_name, 4);
+    if (!roughness.valid() && !metallic.valid())
+        return kNoTexture;
+
+    TextureData texture;
+    texture.width = roughness.valid() ? roughness.width : metallic.width;
+    texture.height = roughness.valid() ? roughness.height : metallic.height;
+    texture.srgb = false;
+    texture.pixels.resize(static_cast<size_t>(texture.width) * texture.height * 4);
+
+    auto nearest = [](uint32_t coordinate, uint32_t destination, uint32_t source) {
+        return std::min(coordinate * source / destination, source - 1);
+    };
+
+    for (uint32_t y = 0; y < texture.height; ++y) {
+        for (uint32_t x = 0; x < texture.width; ++x) {
+            const uint8_t r = roughness.valid()
+                                  ? sample_red(roughness,
+                                               nearest(x, texture.width, roughness.width),
+                                               nearest(y, texture.height, roughness.height))
+                                  : 255;
+            const uint8_t m = metallic.valid()
+                                  ? sample_red(metallic,
+                                               nearest(x, texture.width, metallic.width),
+                                               nearest(y, texture.height, metallic.height))
+                                  : 255;
+            const size_t index = (static_cast<size_t>(y) * texture.width + x) * 4;
+            texture.pixels[index + 0] = 255;
+            texture.pixels[index + 1] = r;
+            texture.pixels[index + 2] = m;
+            texture.pixels[index + 3] = 255;
+        }
+    }
+
+    const int32_t index = static_cast<int32_t>(model.textures.size());
+    model.textures.push_back(std::move(texture));
+    cache.emplace(key, index);
+    return index;
+}
+
 } // namespace
 
 ObjModel load_obj(const std::filesystem::path& path) {
@@ -106,6 +174,11 @@ ObjModel load_obj(const std::filesystem::path& path) {
             load_texture(model, texture_cache, texture_dir, source.diffuse_texname, /*srgb=*/true);
         material.emissive_texture = load_texture(model, texture_cache, texture_dir,
                                                  source.emissive_texname, /*srgb=*/true);
+        material.normal_texture =
+            load_texture(model, texture_cache, texture_dir, source.normal_texname, /*srgb=*/false);
+        material.metallic_roughness_texture =
+            load_metallic_roughness(model, texture_cache, texture_dir, source.roughness_texname,
+                                    source.metallic_texname);
         model.materials.push_back(material);
     }
     if (model.materials.empty())
@@ -211,6 +284,10 @@ ObjModel load_obj(const std::filesystem::path& path) {
             }
         }
     }
+
+    // Tangents depend on normals and UVs, so compute them once both are known.
+    for (Mesh& mesh : model.meshes)
+        compute_tangents(mesh);
 
     return model;
 }

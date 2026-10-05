@@ -35,6 +35,7 @@ struct HitInfo {
     float3 position;
     float3 normal;
     float2 uv;
+    float3 tangent;
     float3 emission;
     GpuMaterial material;
     uint light_index; // kNoLight when the hit is not a light
@@ -75,6 +76,7 @@ bool trace_scene(float3 origin, float3 direction, float t_min, float t_max, out 
     float3 best_position = float3(0.0, 0.0, 0.0);
     float3 best_normal = float3(0.0, 0.0, 0.0);
     float2 best_uv = float2(0.0, 0.0);
+    float3 best_tangent = float3(1.0, 0.0, 0.0);
     uint best_material = 0;
     bool best_front_face = false;
 
@@ -103,17 +105,24 @@ bool trace_scene(float3 origin, float3 direction, float t_min, float t_max, out 
                                      weights.z * v2.normal;
         const float2 object_uv =
             weights.x * v0.uv + weights.y * v1.uv + weights.z * v2.uv;
+        const float3 object_tangent = weights.x * v0.tangent + weights.y * v1.tangent +
+                                      weights.z * v2.tangent;
         const float3 outward_normal = normalize(instance_to_world_dir(instance, object_normal));
         float3 normal = outward_normal;
         const bool front_face = dot(outward_normal, direction) < 0.0;
         if (!front_face)
             normal = -normal;
 
+        float3 world_tangent = instance_to_world_dir(instance, object_tangent);
+        const float tangent_length = length(world_tangent);
+        world_tangent = tangent_length > 1e-8 ? world_tangent / tangent_length : float3(1.0, 0.0, 0.0);
+
         found = true;
         closest = query.CommittedRayT();
         best_position = origin + direction * closest;
         best_normal = normal;
         best_uv = object_uv;
+        best_tangent = world_tangent;
         best_material = instance.geometry.w;
         best_front_face = front_face;
     }
@@ -142,6 +151,7 @@ bool trace_scene(float3 origin, float3 direction, float t_min, float t_max, out 
     hit.position = best_position;
     hit.normal = best_normal;
     hit.uv = best_uv;
+    hit.tangent = best_tangent;
     hit.light_index = best_light;
     hit.front_face = best_front_face;
     if (best_light != kNoLight) {
@@ -371,7 +381,7 @@ void computeMain(uint3 thread_id : SV_DispatchThreadID) {
             break;
         }
 
-        const Bsdf bsdf = make_bsdf(hit.material, hit.normal, hit.front_face, hit.uv);
+        const Bsdf bsdf = make_bsdf(hit.material, hit.normal, hit.tangent, hit.front_face, hit.uv);
         radiance += throughput * bsdf.emission;
         const float3 wo = frame_to_local(bsdf.frame, -direction);
         if (wo.z <= 0.0)

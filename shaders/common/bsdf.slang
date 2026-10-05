@@ -89,21 +89,38 @@ float3 anisotropic_tangent(float3 n) {
     return normalize(t);
 }
 
-Bsdf make_bsdf(GpuMaterial material, float3 normal, bool front_face, float2 uv) {
+Bsdf make_bsdf(GpuMaterial material, float3 normal, float3 tangent, bool front_face, float2 uv) {
     Bsdf bsdf;
 
-    const float metallic = clamp(material.params.x, 0.0, 1.0);
-    const float roughness = clamp(material.params.y, 0.0, 1.0);
     const float transmission = clamp(material.params.z, 0.0, 1.0);
     const float ior = max(material.params.w, 1.0);
     const float anisotropy = clamp(material.params2.x, 0.0, 0.95);
+
+    // Metallic-roughness map (G = roughness, B = metallic), multiplied by the
+    // scalar factors.
+    const float3 mr = sample_texture_or_white(material.textures.y, uv);
+    const float metallic = clamp(material.params.x * mr.b, 0.0, 1.0);
+    const float roughness = clamp(material.params.y * mr.g, 0.0, 1.0);
 
     // Base colour and emission are factor * texture (the texture slot returns
     // white when unused, so the factor passes through).
     const float3 base_color = material.base_color.rgb * sample_texture_or_white(material.textures.x, uv);
     bsdf.emission = material.emission.rgb * sample_texture_or_white(material.textures.w, uv);
 
-    bsdf.frame = frame_from_normal_tangent(normal, anisotropic_tangent(normal));
+    // Normal mapping perturbs the shading normal through the tangent frame.
+    float3 shading_normal = normal;
+    if (material.textures.z >= 0) {
+        const float3 n_ts = g_textures[material.textures.z].SampleLevel(uv, 0.0).xyz * 2.0 - 1.0;
+        float3 t = tangent - normal * dot(normal, tangent);
+        if (dot(t, t) < 1e-8)
+            t = anisotropic_tangent(normal);
+        else
+            t = normalize(t);
+        const float3 b = cross(normal, t);
+        shading_normal = normalize(t * n_ts.x + b * n_ts.y + normal * n_ts.z);
+    }
+
+    bsdf.frame = frame_from_normal_tangent(shading_normal, anisotropic_tangent(shading_normal));
 
     const float alpha_iso = max(roughness * roughness, 1e-6);
     const float aspect = sqrt(1.0 - anisotropy * 0.9);
