@@ -36,7 +36,7 @@ struct EnvironmentSampling {
     float pdf_scale = 0.0f; // width * height / (2 * pi^2 * total_weight)
 };
 
-/// @brief Loads an equirectangular HDR (Radiance .hdr) through stb_image.
+/// @brief Loads an equirectangular image through the shared image loader.
 ///
 /// Returns an invalid environment (and logs to stderr) when the file is missing
 /// or malformed, so the caller can fall back to a procedural sky.

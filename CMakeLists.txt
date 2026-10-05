@@ -59,6 +59,7 @@ add_library(vulchovy_core STATIC
     src/app/application.cpp
     src/camera/orbit_camera_controller.cpp
     src/camera/perspective_camera.cpp
+    src/io/image.cpp
     src/platform/input.cpp
     src/platform/window.cpp
     src/render/display_pass.cpp

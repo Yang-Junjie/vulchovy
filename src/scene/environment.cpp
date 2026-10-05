@@ -2,12 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
 
 #include <glm/gtc/constants.hpp>
 
-#define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
+#include "io/image.h"
 
 namespace vulchovy {
 
@@ -17,31 +15,37 @@ float luminance(const vec3& c) {
     return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b;
 }
 
+float srgb_to_linear(float c) {
+    return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f);
+}
+
 } // namespace
 
 Environment load_environment(const std::filesystem::path& path) {
     Environment environment;
 
-    int width = 0;
-    int height = 0;
-    int channels = 0;
-    float* data = stbi_loadf(path.string().c_str(), &width, &height, &channels, STBI_rgb);
-    if (data == nullptr || width <= 0 || height <= 0) {
-        std::fprintf(stderr, "vulchovy: could not load environment '%s': %s\n",
-                     path.string().c_str(), stbi_failure_reason());
-        if (data != nullptr)
-            stbi_image_free(data);
+    const ImageData image = load_image(path, 3);
+    if (!image.valid())
         return environment;
+
+    environment.width = image.width;
+    environment.height = image.height;
+    environment.pixels.resize(static_cast<size_t>(image.width) * image.height);
+
+    if (image.hdr) {
+        for (size_t i = 0; i < environment.pixels.size(); ++i) {
+            environment.pixels[i] = vec3{image.floats[i * 3 + 0], image.floats[i * 3 + 1],
+                                         image.floats[i * 3 + 2]};
+        }
+    } else {
+        // LDR fallback: expand to float and decode sRGB to linear.
+        for (size_t i = 0; i < environment.pixels.size(); ++i) {
+            environment.pixels[i] = vec3{srgb_to_linear(image.bytes[i * 3 + 0] / 255.0f),
+                                         srgb_to_linear(image.bytes[i * 3 + 1] / 255.0f),
+                                         srgb_to_linear(image.bytes[i * 3 + 2] / 255.0f)};
+        }
     }
 
-    environment.width = static_cast<uint32_t>(width);
-    environment.height = static_cast<uint32_t>(height);
-    environment.pixels.resize(static_cast<size_t>(width) * static_cast<size_t>(height));
-    for (size_t i = 0; i < environment.pixels.size(); ++i) {
-        environment.pixels[i] = vec3{data[i * 3 + 0], data[i * 3 + 1], data[i * 3 + 2]};
-    }
-
-    stbi_image_free(data);
     return environment;
 }
 
