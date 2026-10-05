@@ -5,6 +5,9 @@
 
 #include <vulcao/acceleration_structure.h>
 #include <vulcao/buffer.h>
+#include <vulcao/image.h>
+#include <vulcao/image_view.h>
+#include <vulcao/sampler.h>
 
 #include "scene/gpu_types.h"
 #include "scene/scene.h"
@@ -42,6 +45,13 @@ public:
     const vulcao::AccelerationStructure& tlas() const { return tlas_; }
     const SceneDescriptors& scene_descriptors() const { return scene_descriptors_; }
 
+    const vulcao::ImageView& environment_view() const { return environment_view_; }
+    const vulcao::Sampler& environment_sampler() const { return environment_sampler_; }
+    const vulcao::Buffer& env_marginal() const { return env_marginal_; }
+    const vulcao::Buffer& env_conditional() const { return env_conditional_; }
+    const Environment& environment() const { return environment_; }
+    float environment_pdf_scale() const { return env_pdf_scale_; }
+
     uint32_t material_count() const { return material_count_; }
     uint32_t light_count() const { return light_count_; }
     uint32_t instance_count() const { return instance_count_; }
@@ -62,6 +72,14 @@ private:
     std::vector<vulcao::AccelerationStructure> blas_;
     vulcao::Buffer instance_buffer_;
     vulcao::AccelerationStructure tlas_;
+
+    Environment environment_;
+    vulcao::Image environment_image_;
+    vulcao::ImageView environment_view_;
+    vulcao::Sampler environment_sampler_;
+    vulcao::Buffer env_marginal_;
+    vulcao::Buffer env_conditional_;
+    float env_pdf_scale_ = 0.0f;
 
     SceneDescriptors scene_descriptors_;
 

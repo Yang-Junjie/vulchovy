@@ -23,6 +23,11 @@ set(VULCAO_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(VULCAO_INSTALL OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/vulcao)
 
+# --- stb (vendored, header only) --------------------------------------------
+
+add_library(stb INTERFACE)
+target_include_directories(stb INTERFACE ${CMAKE_SOURCE_DIR}/third_party/stb)
+
 # --- third party (fetched) ---------------------------------------------------
 
 include(FetchContent)
@@ -64,6 +69,7 @@ add_library(vulchovy_core STATIC
     src/render/integrators/ray_query/path_tracer.cpp
     src/render/integrators/ray_query/whitted.cpp
     src/scene/gpu_scene.cpp
+    src/scene/environment.cpp
     src/scene/mesh.cpp
     src/scene/scene.cpp
     src/scene/scene_descriptors.cpp
@@ -78,14 +84,15 @@ target_compile_definitions(vulchovy_core PUBLIC
     GLM_FORCE_DEPTH_ZERO_TO_ONE)
 
 target_compile_definitions(vulchovy_core PRIVATE
-    "VULCHOVY_VALIDATION=$<BOOL:${VULCHOVY_VALIDATION}>")
+    "VULCHOVY_VALIDATION=$<BOOL:${VULCHOVY_VALIDATION}>"
+    "VULCHOVY_ASSET_DIR=\"${CMAKE_SOURCE_DIR}/assets\"")
 
 target_link_libraries(vulchovy_core PUBLIC
     vulcao
     glm::glm
 )
 
-target_link_libraries(vulchovy_core PRIVATE glfw)
+target_link_libraries(vulchovy_core PRIVATE glfw stb)
 
 target_compile_options(vulchovy_core PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall -Wextra -Wpedantic>)

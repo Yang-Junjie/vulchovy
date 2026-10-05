@@ -8,11 +8,12 @@ namespace vulchovy {
 // shaders/common/scene.slang and must stay byte-for-byte compatible; every
 // member is a vec4/ivec4 so the stride matches std430 without extra padding.
 
-/// @brief One entry of the material buffer (metallic-roughness).
+/// @brief One entry of the material buffer (metallic-roughness / dielectric).
 struct GpuMaterial {
     vec4 base_color; // rgb
     vec4 emission;   // rgb
-    vec4 params;     // x = metallic, y = roughness
+    vec4 params;     // x = metallic, y = roughness, z = transmission, w = ior
+    vec4 params2;    // x = anisotropy
 };
 
 /// @brief One entry of the light buffer.
@@ -39,7 +40,7 @@ struct GpuInstance {
     glm::uvec4 geometry; // x = vertex offset, y = index offset, z = index count, w = material index
 };
 
-static_assert(sizeof(GpuMaterial) == 48, "GpuMaterial must match std430");
+static_assert(sizeof(GpuMaterial) == 64, "GpuMaterial must match std430");
 static_assert(sizeof(GpuLight) == 48, "GpuLight must match std430");
 static_assert(sizeof(GpuInstance) == 144, "GpuInstance must match std430");
 

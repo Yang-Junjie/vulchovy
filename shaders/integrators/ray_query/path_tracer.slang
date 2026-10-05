@@ -8,6 +8,7 @@
 #include "common/scene.slang"
 #include "common/bsdf.slang"
 #include "common/random.slang"
+#include "common/environment.slang"
 
 struct CameraData {
     float4 position;
@@ -20,6 +21,7 @@ struct Uniforms {
     CameraData camera;
     uint4 counts;  // x = material count, y = light count, z = instance count, w = frame
     uint4 options; // x = max depth, y = width, z = height, w = sample count
+    float4 env;    // x = intensity, y = rotation, z = pdf scale, w = env selection probability
 };
 
 [[vk::binding(0, 1)]] ConstantBuffer<Uniforms> g_uniforms;
@@ -35,6 +37,7 @@ struct HitInfo {
     float3 emission;
     GpuMaterial material;
     uint light_index; // kNoLight when the hit is not a light
+    bool front_face;  // true when the ray enters the surface (outward normal faces the ray)
 };
 
 bool intersect_sphere(float3 center,
@@ -71,6 +74,7 @@ bool trace_scene(float3 origin, float3 direction, float t_min, float t_max, out 
     float3 best_position = float3(0.0, 0.0, 0.0);
     float3 best_normal = float3(0.0, 0.0, 0.0);
     uint best_material = 0;
+    bool best_front_face = false;
 
     RayDesc ray;
     ray.Origin = origin;
@@ -95,8 +99,10 @@ bool trace_scene(float3 origin, float3 direction, float t_min, float t_max, out 
         const Vertex v2 = g_vertices[instance.geometry.x + g_indices[base + 2]];
         const float3 object_normal = weights.x * v0.normal + weights.y * v1.normal +
                                      weights.z * v2.normal;
-        float3 normal = normalize(instance_to_world_dir(instance, object_normal));
-        if (dot(normal, direction) > 0.0)
+        const float3 outward_normal = normalize(instance_to_world_dir(instance, object_normal));
+        float3 normal = outward_normal;
+        const bool front_face = dot(outward_normal, direction) < 0.0;
+        if (!front_face)
             normal = -normal;
 
         found = true;
@@ -104,6 +110,7 @@ bool trace_scene(float3 origin, float3 direction, float t_min, float t_max, out 
         best_position = origin + direction * closest;
         best_normal = normal;
         best_material = instance.geometry.w;
+        best_front_face = front_face;
     }
 
     // Analytic sphere lights are not in the acceleration structure.
@@ -130,6 +137,7 @@ bool trace_scene(float3 origin, float3 direction, float t_min, float t_max, out 
     hit.position = best_position;
     hit.normal = best_normal;
     hit.light_index = best_light;
+    hit.front_face = best_front_face;
     if (best_light != kNoLight) {
         hit.emission = g_lights[best_light].emission.rgb;
     } else {
@@ -206,14 +214,41 @@ float power_heuristic(float pdf_a, float pdf_b) {
 }
 
 // Next-event estimation at a surface with the given BSDF. wo is in the local
-// frame and points away from the surface.
+// frame and points away from the surface. Samples either the environment or one
+// of the analytic lights, combining with the BSDF sampling strategy via MIS.
 float3 sample_direct_light(Bsdf bsdf, float3 position, float3 wo, inout Rng rng) {
+    const float p_env = g_uniforms.env.w;
+
+    if (p_env > 0.0 && rng_float(rng) < p_env) {
+        // Environment light by importance sampling.
+        float env_sample_pdf;
+        const float3 light_dir = env_sample(rng_float2(rng), g_uniforms.env.y,
+                                            g_uniforms.env.z, env_sample_pdf);
+        const float light_pdf = p_env * env_sample_pdf;
+        if (light_pdf <= 0.0)
+            return float3(0.0, 0.0, 0.0);
+
+        const float3 wi = frame_to_local(bsdf.frame, light_dir);
+        if (wi.z <= 0.0)
+            return float3(0.0, 0.0, 0.0);
+        const float3 f = bsdf_eval(bsdf, wo, wi);
+        if (all(f == float3(0.0, 0.0, 0.0)))
+            return float3(0.0, 0.0, 0.0);
+        if (occluded(offset_ray_origin(position, bsdf.frame.normal, light_dir), light_dir, 1e30))
+            return float3(0.0, 0.0, 0.0);
+
+        const float3 radiance = env_radiance(light_dir, g_uniforms.env.x, g_uniforms.env.y);
+        const float bsdf_pdf_value = bsdf_pdf(bsdf, wo, wi);
+        const float weight = power_heuristic(light_pdf, bsdf_pdf_value);
+        return f * radiance * wi.z / light_pdf * weight;
+    }
+
     const uint light_count = g_uniforms.counts.y;
     if (light_count == 0)
         return float3(0.0, 0.0, 0.0);
 
     const uint index = min(uint(rng_float(rng) * float(light_count)), light_count - 1);
-    const float selection_pdf = 1.0 / float(light_count);
+    const float selection_pdf = (1.0 - p_env) / float(light_count);
     const GpuLight light = g_lights[index];
     const float radius = light.params.x;
 
@@ -254,8 +289,8 @@ float3 sample_direct_light(Bsdf bsdf, float3 position, float3 wo, inout Rng rng)
         return float3(0.0, 0.0, 0.0);
 
     const float light_pdf = cone_pdf * selection_pdf;
-    const float bsdf_pdf = bsdf_pdf(bsdf, wo, wi);
-    const float weight = power_heuristic(light_pdf, bsdf_pdf);
+    const float bsdf_pdf_value = bsdf_pdf(bsdf, wo, wi);
+    const float weight = power_heuristic(light_pdf, bsdf_pdf_value);
     return f * light.emission.rgb * wi.z / light_pdf * weight;
 }
 
@@ -293,6 +328,19 @@ void computeMain(uint3 thread_id : SV_DispatchThreadID) {
     for (uint depth = 0; depth < max_depth; ++depth) {
         HitInfo hit;
         if (!trace_scene(origin, direction, 0.001, 1e30, hit)) {
+            // The ray escaped to the environment.
+            if (g_uniforms.env.w > 0.0) {
+                const float3 radiance_env =
+                    env_radiance(direction, g_uniforms.env.x, g_uniforms.env.y);
+                float weight = 1.0;
+                if (!primary && !previous_delta) {
+                    const float env_pdf_value =
+                        g_uniforms.env.w *
+                        env_pdf(direction, g_uniforms.env.y, g_uniforms.env.z);
+                    weight = power_heuristic(previous_bsdf_pdf, env_pdf_value);
+                }
+                radiance += throughput * radiance_env * weight;
+            }
             break;
         }
 
@@ -316,7 +364,7 @@ void computeMain(uint3 thread_id : SV_DispatchThreadID) {
 
         radiance += throughput * hit.emission;
 
-        const Bsdf bsdf = make_bsdf(hit.material, hit.normal);
+        const Bsdf bsdf = make_bsdf(hit.material, hit.normal, hit.front_face);
         const float3 wo = frame_to_local(bsdf.frame, -direction);
         if (wo.z <= 0.0)
             break;

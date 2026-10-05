@@ -17,9 +17,10 @@ struct PathTracerUniforms {
     CameraData camera;
     glm::uvec4 counts;  // x = material count, y = light count, z = instance count, w = frame
     glm::uvec4 options; // x = max depth, y = width, z = height, w = sample count
+    glm::vec4 env;      // x = intensity, y = rotation, z = pdf scale, w = env selection prob
 };
 
-static_assert(sizeof(PathTracerUniforms) == 96, "PathTracerUniforms must match the shader block");
+static_assert(sizeof(PathTracerUniforms) == 112, "PathTracerUniforms must match the shader block");
 
 } // namespace
 
@@ -39,6 +40,13 @@ void PathTracer::record(const FrameContext& frame) {
     uniforms.counts = glm::uvec4(scene_.material_count(), scene_.light_count(),
                                  scene_.instance_count(), frame.frame_index);
     uniforms.options = glm::uvec4(max_depth_, frame.extent.width, frame.extent.height, sample_count_);
+    const Environment& environment = scene_.environment();
+    const bool env_valid = environment.valid() && scene_.environment_pdf_scale() > 0.0f;
+    // Split sampling between the environment and the analytic lights.
+    const float env_probability =
+        !env_valid ? 0.0f : (scene_.light_count() > 0 ? 0.5f : 1.0f);
+    uniforms.env = glm::vec4(environment.intensity, environment.rotation,
+                             scene_.environment_pdf_scale(), env_probability);
     write_uniforms(&uniforms, sizeof(uniforms));
 
     vulcao::CommandBuffer& cmd = frame.command_buffer;

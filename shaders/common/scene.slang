@@ -5,6 +5,8 @@
 // Mirrors src/scene/gpu_types.h. The instance transforms are stored as explicit
 // basis vectors to avoid depending on matrix memory layout conventions.
 
+static const float kPi = 3.14159265358979;
+
 struct Vertex {
     float3 position;
     float3 normal;
@@ -13,7 +15,8 @@ struct Vertex {
 struct GpuMaterial {
     float4 base_color;
     float4 emission;
-    float4 params; // x = metallic, y = roughness
+    float4 params;  // x = metallic, y = roughness, z = transmission, w = ior
+    float4 params2; // x = anisotropy
 };
 
 struct GpuLight {

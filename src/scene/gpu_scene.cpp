@@ -1,5 +1,6 @@
 #include "scene/gpu_scene.h"
 
+#include <algorithm>
 #include <span>
 
 #include <glm/gtc/matrix_inverse.hpp>
@@ -50,7 +51,9 @@ GpuScene::GpuScene(vulcao::Context& context, const Scene& scene, bool build_acce
         materials.push_back(GpuMaterial{
             .base_color = vec4(material.base_color, 0.0f),
             .emission = vec4(material.emission, 0.0f),
-            .params = vec4(material.metallic, material.roughness, 0.0f, 0.0f),
+            .params = vec4(material.metallic, material.roughness, material.transmission,
+                           material.ior),
+            .params2 = vec4(material.anisotropy, 0.0f, 0.0f, 0.0f),
         });
     }
     material_count_ = static_cast<uint32_t>(materials.size());
@@ -89,6 +92,52 @@ GpuScene::GpuScene(vulcao::Context& context, const Scene& scene, bool build_acce
     }
     instance_count_ = static_cast<uint32_t>(instances.size());
     instances_ = vulcao::Buffer::create_with_data(context, instances, kSceneBufferUsage);
+
+    // Environment map: image, sampler and the importance-sampling CDFs. The
+    // integrator needs these on the GPU before the scene descriptor set is built.
+    environment_ = scene.environment;
+    if (!environment_.valid())
+        environment_ = make_procedural_sky();
+
+    const EnvironmentSampling sampling = build_environment_sampling(environment_);
+    env_pdf_scale_ = sampling.pdf_scale;
+    std::vector<float> marginal = sampling.marginal;
+    std::vector<float> conditional = sampling.conditional;
+    if (marginal.empty())
+        marginal.push_back(1.0f);
+    if (conditional.empty())
+        conditional.push_back(1.0f);
+    env_marginal_ = vulcao::Buffer::create_with_data(context, marginal, kSceneBufferUsage);
+    env_conditional_ = vulcao::Buffer::create_with_data(context, conditional, kSceneBufferUsage);
+
+    uint32_t mip_levels = 1;
+    while ((1u << mip_levels) < std::max(environment_.width, environment_.height))
+        ++mip_levels;
+
+    environment_image_ = vulcao::Image::create_2d(
+        context.allocator(), vk::Extent2D{environment_.width, environment_.height},
+        vk::Format::eR32G32B32A32Sfloat,
+        vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst |
+            vk::ImageUsageFlagBits::eTransferSrc,
+        mip_levels);
+    environment_view_ = vulcao::ImageView::create(context.device(), environment_image_);
+    environment_sampler_ = vulcao::Sampler::create(
+        context.device(),
+        vk::SamplerCreateInfo{
+            .magFilter = vk::Filter::eLinear,
+            .minFilter = vk::Filter::eLinear,
+            .mipmapMode = vk::SamplerMipmapMode::eLinear,
+            .addressModeU = vk::SamplerAddressMode::eRepeat,
+            .addressModeV = vk::SamplerAddressMode::eClampToEdge,
+            .addressModeW = vk::SamplerAddressMode::eClampToEdge,
+            .maxLod = static_cast<float>(mip_levels),
+        });
+
+    std::vector<vec4> texels(environment_.pixels.size());
+    for (size_t i = 0; i < texels.size(); ++i)
+        texels[i] = vec4(environment_.pixels[i], 1.0f);
+    context.upload(environment_image_, texels.data(), texels.size() * sizeof(vec4),
+                   vk::ImageLayout::eShaderReadOnlyOptimal, true);
 
     scene_descriptors_ = SceneDescriptors(context.device(), *this);
 
