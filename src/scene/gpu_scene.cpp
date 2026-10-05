@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <span>
 
 #include <glm/gtc/matrix_inverse.hpp>
@@ -45,6 +46,90 @@ std::vector<DrawInstance> flatten_nodes(const Scene& scene) {
     return draw_instances;
 }
 
+float luminance(const vec3& color) {
+    return 0.2126f * color.r + 0.7152f * color.g + 0.0722f * color.b;
+}
+
+float srgb_to_linear(float c) {
+    return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f);
+}
+
+vec3 sample_texture_linear(const TextureData& texture, const vec2& uv) {
+    if (!texture.valid())
+        return vec3{1.0f};
+    const float u = uv.x - std::floor(uv.x);
+    const float v = uv.y - std::floor(uv.y);
+    const uint32_t x = std::min(static_cast<uint32_t>(u * texture.width), texture.width - 1);
+    const uint32_t y = std::min(static_cast<uint32_t>(v * texture.height), texture.height - 1);
+    const size_t base = (static_cast<size_t>(y) * texture.width + x) * 4;
+    float channels[3];
+    for (int c = 0; c < 3; ++c) {
+        const float value = texture.pixels[base + c] / 255.0f;
+        channels[c] = texture.srgb ? srgb_to_linear(value) : value;
+    }
+    return vec3{channels[0], channels[1], channels[2]};
+}
+
+/// @brief An emissive triangle plus its importance-sampling weight.
+struct MeshLightBuild {
+    std::vector<GpuMeshLight> triangles;
+    std::vector<float> weights;
+    std::vector<uint32_t> instance_base;
+    float total_weight = 0.0f;
+};
+
+MeshLightBuild build_mesh_lights(const Scene& scene,
+                                 const std::vector<DrawInstance>& draw_instances) {
+    MeshLightBuild build;
+    build.instance_base.assign(draw_instances.size(), 0xFFFFFFFFu);
+
+    for (size_t di = 0; di < draw_instances.size(); ++di) {
+        const DrawInstance& draw = draw_instances[di];
+        const Material& material = scene.materials[draw.material];
+        if (luminance(material.emission) <= 0.0f)
+            continue;
+
+        const Mesh& mesh = scene.meshes[draw.mesh];
+        const uint32_t triangle_count = static_cast<uint32_t>(mesh.indices.size() / 3);
+        if (triangle_count == 0)
+            continue;
+
+        build.instance_base[di] = static_cast<uint32_t>(build.triangles.size());
+        for (uint32_t t = 0; t < triangle_count; ++t) {
+            const Vertex& v0 = mesh.vertices[mesh.indices[t * 3 + 0]];
+            const Vertex& v1 = mesh.vertices[mesh.indices[t * 3 + 1]];
+            const Vertex& v2 = mesh.vertices[mesh.indices[t * 3 + 2]];
+            const vec3 p0 = vec3(draw.transform * vec4{v0.position, 1.0f});
+            const vec3 p1 = vec3(draw.transform * vec4{v1.position, 1.0f});
+            const vec3 p2 = vec3(draw.transform * vec4{v2.position, 1.0f});
+
+            const vec3 cross_product = cross(p1 - p0, p2 - p0);
+            const float area = 0.5f * length(cross_product);
+            const vec3 normal =
+                area > 1e-12f ? cross_product / (2.0f * area) : vec3{0.0f, 1.0f, 0.0f};
+
+            vec3 emission = material.emission;
+            if (material.emissive_texture >= 0 &&
+                static_cast<size_t>(material.emissive_texture) < scene.textures.size()) {
+                const vec2 uv = (v0.uv + v1.uv + v2.uv) / 3.0f;
+                emission *= sample_texture_linear(scene.textures[material.emissive_texture], uv);
+            }
+
+            build.triangles.push_back(GpuMeshLight{
+                .p0 = vec4(p0, 0.0f),
+                .p1 = vec4(p1, 0.0f),
+                .p2 = vec4(p2, 0.0f),
+                .normal = vec4(normal, area),
+                .emission = vec4(emission, 0.0f),
+            });
+            const float weight = luminance(emission) * area;
+            build.weights.push_back(weight);
+            build.total_weight += weight;
+        }
+    }
+    return build;
+}
+
 } // namespace
 
 GpuScene::GpuScene(vulcao::Context& context, const Scene& scene, bool build_acceleration_structures) {
@@ -64,6 +149,10 @@ GpuScene::GpuScene(vulcao::Context& context, const Scene& scene, bool build_acce
     }
 
     const vk::BufferUsageFlags usage = geometry_usage(build_acceleration_structures);
+    if (vertices.empty())
+        vertices.push_back(Vertex{});
+    if (indices.empty())
+        indices.push_back(0u);
     vertices_ = vulcao::Buffer::create_with_data(context, vertices, usage);
     indices_ = vulcao::Buffer::create_with_data(context, indices, usage);
 
@@ -82,6 +171,8 @@ GpuScene::GpuScene(vulcao::Context& context, const Scene& scene, bool build_acce
         });
     }
     material_count_ = static_cast<uint32_t>(materials.size());
+    if (materials.empty())
+        materials.push_back(GpuMaterial{});
     materials_ = vulcao::Buffer::create_with_data(context, materials, kSceneBufferUsage);
 
     std::vector<GpuLight> lights;
@@ -94,6 +185,8 @@ GpuScene::GpuScene(vulcao::Context& context, const Scene& scene, bool build_acce
         });
     }
     light_count_ = static_cast<uint32_t>(lights.size());
+    if (lights.empty())
+        lights.push_back(GpuLight{});
     lights_ = vulcao::Buffer::create_with_data(context, lights, kSceneBufferUsage);
 
     const std::vector<DrawInstance> draw_instances = flatten_nodes(scene);
@@ -117,6 +210,8 @@ GpuScene::GpuScene(vulcao::Context& context, const Scene& scene, bool build_acce
         });
     }
     instance_count_ = static_cast<uint32_t>(instances.size());
+    if (instances.empty())
+        instances.push_back(GpuInstance{});
     instances_ = vulcao::Buffer::create_with_data(context, instances, kSceneBufferUsage);
 
     // Environment map: image, sampler and the importance-sampling CDFs. The
@@ -193,6 +288,41 @@ GpuScene::GpuScene(vulcao::Context& context, const Scene& scene, bool build_acce
                    vk::ImageLayout::eShaderReadOnlyOptimal, false);
     fallback_texture_view_ =
         vulcao::ImageView::create(context.device(), fallback_texture_image_);
+
+    // Emissive-triangle area lights: geometry, an area-weighted CDF for sampling,
+    // and a per-instance base index so a BSDF hit can recover its light.
+    const MeshLightBuild mesh_lights = build_mesh_lights(scene, draw_instances);
+    mesh_light_count_ = static_cast<uint32_t>(mesh_lights.triangles.size());
+    mesh_light_total_ = mesh_lights.total_weight;
+
+    std::vector<GpuMeshLight> light_triangles = mesh_lights.triangles;
+    if (light_triangles.empty())
+        light_triangles.push_back(GpuMeshLight{vec4{0.0f}, vec4{0.0f}, vec4{0.0f}, vec4{0.0f},
+                                               vec4{0.0f}});
+
+    std::vector<float> light_cdf(mesh_light_count_ + 1, 0.0f);
+    if (mesh_light_count_ == 0) {
+        light_cdf[0] = 1.0f;
+    } else if (mesh_light_total_ > 0.0f) {
+        float accum = 0.0f;
+        for (uint32_t i = 0; i < mesh_light_count_; ++i) {
+            accum += mesh_lights.weights[i];
+            light_cdf[i + 1] = accum / mesh_light_total_;
+        }
+    } else {
+        for (uint32_t i = 0; i < mesh_light_count_; ++i)
+            light_cdf[i + 1] = static_cast<float>(i + 1) / static_cast<float>(mesh_light_count_);
+    }
+
+    std::vector<uint32_t> instance_base = mesh_lights.instance_base;
+    if (instance_base.empty())
+        instance_base.push_back(0xFFFFFFFFu);
+
+    mesh_light_triangles_ =
+        vulcao::Buffer::create_with_data(context, light_triangles, kSceneBufferUsage);
+    mesh_light_cdf_ = vulcao::Buffer::create_with_data(context, light_cdf, kSceneBufferUsage);
+    instance_light_base_ =
+        vulcao::Buffer::create_with_data(context, instance_base, kSceneBufferUsage);
 
     scene_descriptors_ = SceneDescriptors(context.device(), *this);
 

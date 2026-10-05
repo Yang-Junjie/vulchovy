@@ -22,6 +22,7 @@ struct Uniforms {
     uint4 counts;  // x = material count, y = light count, z = instance count, w = frame
     uint4 options; // x = max depth, y = width, z = height, w = sample count
     float4 env;    // x = intensity, y = rotation, z = pdf scale, w = env selection probability
+    float4 mesh_lights; // x = triangle count, y = total weight, z = selection probability
 };
 
 [[vk::binding(0, 1)]] ConstantBuffer<Uniforms> g_uniforms;
@@ -38,6 +39,7 @@ struct HitInfo {
     float3 tangent;
     float3 emission;
     GpuMaterial material;
+    int mesh_light;   // emissive-triangle index, or -1
     uint light_index; // kNoLight when the hit is not a light
     bool front_face;  // true when the ray enters the surface (outward normal faces the ray)
 };
@@ -78,6 +80,7 @@ bool trace_scene(float3 origin, float3 direction, float t_min, float t_max, out 
     float2 best_uv = float2(0.0, 0.0);
     float3 best_tangent = float3(1.0, 0.0, 0.0);
     uint best_material = 0;
+    int best_mesh_light = -1;
     bool best_front_face = false;
 
     RayDesc ray;
@@ -92,7 +95,8 @@ bool trace_scene(float3 origin, float3 direction, float t_min, float t_max, out 
     }
 
     if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
-        const GpuInstance instance = g_instances[query.CommittedInstanceIndex()];
+        const uint instance_index = query.CommittedInstanceIndex();
+        const GpuInstance instance = g_instances[instance_index];
         const uint primitive = query.CommittedPrimitiveIndex();
         const float2 bary = query.CommittedTriangleBarycentrics();
         const float3 weights = float3(1.0 - bary.x - bary.y, bary.x, bary.y);
@@ -125,6 +129,8 @@ bool trace_scene(float3 origin, float3 direction, float t_min, float t_max, out 
         best_tangent = world_tangent;
         best_material = instance.geometry.w;
         best_front_face = front_face;
+        const uint light_base = g_instance_light_base[instance_index];
+        best_mesh_light = light_base == 0xFFFFFFFFu ? -1 : int(light_base + primitive);
     }
 
     // Analytic sphere lights are not in the acceleration structure.
@@ -152,6 +158,7 @@ bool trace_scene(float3 origin, float3 direction, float t_min, float t_max, out 
     hit.normal = best_normal;
     hit.uv = best_uv;
     hit.tangent = best_tangent;
+    hit.mesh_light = best_mesh_light;
     hit.light_index = best_light;
     hit.front_face = best_front_face;
     if (best_light != kNoLight) {
@@ -229,18 +236,116 @@ float power_heuristic(float pdf_a, float pdf_b) {
     return a2 / max(a2 + b2, 1e-8);
 }
 
+// --- emissive mesh lights (area sampling) -----------------------------------
+
+float mesh_light_luminance(int index) {
+    return dot(g_mesh_lights[index].emission.rgb, float3(0.2126, 0.7152, 0.0722));
+}
+
+int sample_mesh_light_index(float u) {
+    const uint count = uint(g_uniforms.mesh_lights.x);
+    uint lo = 0;
+    uint hi = count;
+    while (lo + 1 < hi) {
+        const uint mid = (lo + hi) / 2;
+        if (g_mesh_light_cdf[mid] <= u)
+            lo = mid;
+        else
+            hi = mid;
+    }
+    return int(min(lo, count - 1));
+}
+
+bool sample_mesh_light_triangle(int index, float3 position, float2 u, out float3 light_dir,
+                                out float distance_to_light, out float3 emitted,
+                                out float cos_light, out float pdf_area) {
+    light_dir = float3(0.0, 0.0, 1.0);
+    distance_to_light = 0.0;
+    emitted = float3(0.0, 0.0, 0.0);
+    cos_light = 0.0;
+    pdf_area = 0.0;
+    const GpuMeshLight light = g_mesh_lights[index];
+    float2 bary = u;
+    if (bary.x + bary.y > 1.0)
+        bary = 1.0 - bary;
+    const float3 point =
+        light.p0.xyz * (1.0 - bary.x - bary.y) + light.p1.xyz * bary.x + light.p2.xyz * bary.y;
+    const float3 to_light = point - position;
+    distance_to_light = length(to_light);
+    if (distance_to_light < 1e-6)
+        return false;
+    light_dir = to_light / distance_to_light;
+    cos_light = abs(dot(light.normal.xyz, light_dir));
+    if (cos_light < 1e-6)
+        return false;
+    emitted = light.emission.rgb;
+    const float total = g_uniforms.mesh_lights.y;
+    pdf_area = total > 0.0 ? mesh_light_luminance(index) / total : 0.0;
+    return pdf_area > 0.0;
+}
+
+// Solid-angle pdf of sampling mesh light `index` toward a shading point, including
+// the strategy selection probability. Used for MIS when a BSDF ray hits it.
+float mesh_light_pdf_solid(int index, float3 shading_point, float3 position, float3 direction) {
+    if (index < 0)
+        return 0.0;
+    const float total = g_uniforms.mesh_lights.y;
+    if (total <= 0.0)
+        return 0.0;
+    const float3 to_light = position - shading_point;
+    const float dist2 = dot(to_light, to_light);
+    if (dist2 < 1e-12)
+        return 0.0;
+    const float cos_light = abs(dot(g_mesh_lights[index].normal.xyz, direction));
+    if (cos_light < 1e-6)
+        return 0.0;
+    const float pdf_area = mesh_light_luminance(index) / total;
+    return g_uniforms.mesh_lights.z * pdf_area * dist2 / cos_light;
+}
+
 // Next-event estimation at a surface with the given BSDF. wo is in the local
-// frame and points away from the surface. Samples either the environment or one
-// of the analytic lights, combining with the BSDF sampling strategy via MIS.
+// frame and points away from the surface. Samples the emissive mesh lights, the
+// environment or one of the analytic lights, combining with BSDF sampling via MIS.
 float3 sample_direct_light(Bsdf bsdf, float3 position, float3 wo, inout Rng rng) {
+    const float p_mesh = g_uniforms.mesh_lights.z;
+    const float selector = rng_float(rng);
+
+    if (p_mesh > 0.0 && selector < p_mesh) {
+        const int index = sample_mesh_light_index(rng_float(rng));
+        float3 light_dir;
+        float distance_to_light;
+        float3 emitted;
+        float cos_light;
+        float pdf_area;
+        if (!sample_mesh_light_triangle(index, position, rng_float2(rng), light_dir,
+                                        distance_to_light, emitted, cos_light, pdf_area))
+            return float3(0.0, 0.0, 0.0);
+        const float3 wi = frame_to_local(bsdf.frame, light_dir);
+        if (wi.z <= 0.0)
+            return float3(0.0, 0.0, 0.0);
+        const float3 f = bsdf_eval(bsdf, wo, wi);
+        if (all(f == float3(0.0, 0.0, 0.0)))
+            return float3(0.0, 0.0, 0.0);
+        if (occluded(offset_ray_origin(position, bsdf.frame.normal, light_dir), light_dir,
+                     distance_to_light - kShadowEpsilon))
+            return float3(0.0, 0.0, 0.0);
+        const float dist2 = distance_to_light * distance_to_light;
+        const float light_pdf = p_mesh * pdf_area * dist2 / cos_light;
+        const float bsdf_pdf_value = bsdf_pdf(bsdf, wo, wi);
+        const float weight = power_heuristic(light_pdf, bsdf_pdf_value);
+        return f * emitted * (wi.z * cos_light / dist2) / light_pdf * weight;
+    }
+
+    const float remaining = max(1.0 - p_mesh, 1e-6);
+    const float sub = (selector - p_mesh) / remaining;
     const float p_env = g_uniforms.env.w;
 
-    if (p_env > 0.0 && rng_float(rng) < p_env) {
+    if (p_env > 0.0 && sub < p_env) {
         // Environment light by importance sampling.
         float env_sample_pdf;
         const float3 light_dir = env_sample(rng_float2(rng), g_uniforms.env.y,
                                             g_uniforms.env.z, env_sample_pdf);
-        const float light_pdf = p_env * env_sample_pdf;
+        const float light_pdf = remaining * p_env * env_sample_pdf;
         if (light_pdf <= 0.0)
             return float3(0.0, 0.0, 0.0);
 
@@ -264,7 +369,7 @@ float3 sample_direct_light(Bsdf bsdf, float3 position, float3 wo, inout Rng rng)
         return float3(0.0, 0.0, 0.0);
 
     const uint index = min(uint(rng_float(rng) * float(light_count)), light_count - 1);
-    const float selection_pdf = (1.0 - p_env) / float(light_count);
+    const float selection_pdf = remaining * (1.0 - p_env) / float(light_count);
     const GpuLight light = g_lights[index];
     const float radius = light.params.x;
 
@@ -341,6 +446,8 @@ void computeMain(uint3 thread_id : SV_DispatchThreadID) {
     bool previous_delta = false;
     bool previous_transmission = false;
     bool primary = true;
+    const float p_mesh = g_uniforms.mesh_lights.z;
+    const float remaining = max(1.0 - p_mesh, 1e-6);
 
     for (uint depth = 0; depth < max_depth; ++depth) {
         HitInfo hit;
@@ -352,7 +459,7 @@ void computeMain(uint3 thread_id : SV_DispatchThreadID) {
                 float weight = 1.0;
                 if (!primary && !previous_delta && !previous_transmission) {
                     const float env_pdf_value =
-                        g_uniforms.env.w *
+                        remaining * g_uniforms.env.w *
                         env_pdf(direction, g_uniforms.env.y, g_uniforms.env.z);
                     weight = power_heuristic(previous_bsdf_pdf, env_pdf_value);
                 }
@@ -370,6 +477,7 @@ void computeMain(uint3 thread_id : SV_DispatchThreadID) {
                 // takes the full contribution.
                 const GpuLight light = g_lights[hit.light_index];
                 const float light_pdf =
+                    remaining * (1.0 - g_uniforms.env.w) *
                     sphere_light_pdf(origin, light.position.xyz, light.params.x, direction) /
                     float(g_uniforms.counts.y);
                 const float weight =
@@ -382,7 +490,14 @@ void computeMain(uint3 thread_id : SV_DispatchThreadID) {
         }
 
         const Bsdf bsdf = make_bsdf(hit.material, hit.normal, hit.tangent, hit.front_face, hit.uv);
-        radiance += throughput * bsdf.emission;
+        // Emissive surfaces are sampled by NEE too, so weight the direct hit.
+        float emission_weight = 1.0;
+        if (!primary && !previous_delta && !previous_transmission && hit.mesh_light >= 0) {
+            const float light_pdf =
+                mesh_light_pdf_solid(hit.mesh_light, origin, hit.position, direction);
+            emission_weight = power_heuristic(previous_bsdf_pdf, light_pdf);
+        }
+        radiance += throughput * bsdf.emission * emission_weight;
         const float3 wo = frame_to_local(bsdf.frame, -direction);
         if (wo.z <= 0.0)
             break;

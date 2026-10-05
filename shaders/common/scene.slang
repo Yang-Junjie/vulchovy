@@ -29,6 +29,14 @@ struct GpuLight {
     float4 params;   // x = radius (0 = point light)
 };
 
+struct GpuMeshLight {
+    float4 p0;       // xyz = world position
+    float4 p1;
+    float4 p2;
+    float4 normal;   // xyz = geometric normal, w = area
+    float4 emission; // rgb = emitted radiance (linear)
+};
+
 struct GpuInstance {
     float4 to_world_x;
     float4 to_world_y;
@@ -46,6 +54,9 @@ struct GpuInstance {
 [[vk::binding(2, 0)]] StructuredBuffer<uint> g_indices;
 [[vk::binding(3, 0)]] StructuredBuffer<Vertex> g_vertices;
 [[vk::binding(4, 0)]] StructuredBuffer<GpuInstance> g_instances;
+[[vk::binding(9, 0)]] StructuredBuffer<GpuMeshLight> g_mesh_lights;
+[[vk::binding(10, 0)]] StructuredBuffer<float> g_mesh_light_cdf;
+[[vk::binding(11, 0)]] StructuredBuffer<uint> g_instance_light_base;
 
 // Sampled texture array. Colour maps use an sRGB image format, so the hardware
 // decodes them to linear on sample; data maps use a linear format.

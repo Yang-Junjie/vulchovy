@@ -9,7 +9,7 @@ namespace vulchovy {
 
 namespace {
 
-const std::array<vk::DescriptorSetLayoutBinding, 9> kBindings{{
+const std::array<vk::DescriptorSetLayoutBinding, 12> kBindings{{
     {0, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute},
     {1, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute},
     {2, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute},
@@ -20,6 +20,9 @@ const std::array<vk::DescriptorSetLayoutBinding, 9> kBindings{{
     {7, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute},
     {8, vk::DescriptorType::eCombinedImageSampler, kMaxSceneTextures,
      vk::ShaderStageFlagBits::eCompute},
+    {9, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute},
+    {10, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute},
+    {11, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute},
 }};
 
 } // namespace
@@ -38,7 +41,10 @@ SceneDescriptors::SceneDescriptors(vk::Device device, const GpuScene& scene) {
         .write_image(5, scene.environment_view(), scene.environment_sampler(),
                      vk::ImageLayout::eShaderReadOnlyOptimal)
         .write_storage_buffer(6, scene.env_marginal())
-        .write_storage_buffer(7, scene.env_conditional());
+        .write_storage_buffer(7, scene.env_conditional())
+        .write_storage_buffer(9, scene.mesh_lights())
+        .write_storage_buffer(10, scene.mesh_light_cdf())
+        .write_storage_buffer(11, scene.instance_light_base());
 
     // Texture array: fill every slot, using the 1x1 white fallback for the rest.
     const std::vector<vulcao::ImageView>& textures = scene.texture_views();

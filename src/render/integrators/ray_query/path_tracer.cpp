@@ -18,9 +18,10 @@ struct PathTracerUniforms {
     glm::uvec4 counts;  // x = material count, y = light count, z = instance count, w = frame
     glm::uvec4 options; // x = max depth, y = width, z = height, w = sample count
     glm::vec4 env;      // x = intensity, y = rotation, z = pdf scale, w = env selection prob
+    glm::vec4 mesh_lights; // x = triangle count, y = total weight, z = selection prob
 };
 
-static_assert(sizeof(PathTracerUniforms) == 112, "PathTracerUniforms must match the shader block");
+static_assert(sizeof(PathTracerUniforms) == 128, "PathTracerUniforms must match the shader block");
 
 } // namespace
 
@@ -47,6 +48,13 @@ void PathTracer::record(const FrameContext& frame) {
         !env_valid ? 0.0f : (scene_.light_count() > 0 ? 0.5f : 1.0f);
     uniforms.env = glm::vec4(environment.intensity, environment.rotation,
                              scene_.environment_pdf_scale(), env_probability);
+    // Mesh lights get half of the light-sampling budget when present.
+    const bool mesh_lights_valid =
+        scene_.mesh_light_count() > 0 && scene_.mesh_light_total() > 0.0f;
+    const float mesh_probability = mesh_lights_valid ? 0.5f : 0.0f;
+    uniforms.mesh_lights =
+        glm::vec4(static_cast<float>(scene_.mesh_light_count()), scene_.mesh_light_total(),
+                  mesh_probability, 0.0f);
     write_uniforms(&uniforms, sizeof(uniforms));
 
     vulcao::CommandBuffer& cmd = frame.command_buffer;

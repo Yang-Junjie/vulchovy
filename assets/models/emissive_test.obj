@@ -1,0 +1,21 @@
+mtllib emissive_test.mtl
+
+o floor
+v -5 0 -5
+v  5 0 -5
+v  5 0  5
+v -5 0  5
+vt 0 0
+vt 1 0
+vt 1 1
+vt 0 1
+usemtl floor
+f 1/1 2/2 3/3 4/4
+
+o emitter
+v -0.5 2.0 -0.5
+v  0.5 2.0 -0.5
+v  0.5 2.0  0.5
+v -0.5 2.0  0.5
+usemtl emitter
+f 5/1 6/2 7/3 8/4

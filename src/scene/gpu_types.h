@@ -28,6 +28,19 @@ struct GpuLight {
     vec4 params;   // x = radius (0 = point light)
 };
 
+/// @brief One emissive triangle used as an area light for next-event estimation.
+///
+/// The emitted radiance is the material's emission (averaged over the emissive
+/// texture) so that light sampling and BSDF hits stay consistent.
+struct GpuMeshLight {
+    vec4 p0;       // xyz = world position
+    vec4 p1;       // xyz = world position
+    vec4 p2;       // xyz = world position
+    vec4 normal;   // xyz = geometric normal, w = area
+    vec4 emission; // rgb = emitted radiance (linear)
+};
+static_assert(sizeof(GpuMeshLight) == 80, "GpuMeshLight must match std430");
+
 /// @brief One entry of the instance buffer.
 ///
 /// Stores the object-to-world and world-to-object transforms as explicit basis

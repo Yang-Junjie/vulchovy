@@ -56,6 +56,12 @@ public:
     const vulcao::ImageView& fallback_texture_view() const { return fallback_texture_view_; }
     const vulcao::Sampler& texture_sampler() const { return texture_sampler_; }
 
+    const vulcao::Buffer& mesh_lights() const { return mesh_light_triangles_; }
+    const vulcao::Buffer& mesh_light_cdf() const { return mesh_light_cdf_; }
+    const vulcao::Buffer& instance_light_base() const { return instance_light_base_; }
+    uint32_t mesh_light_count() const { return mesh_light_count_; }
+    float mesh_light_total() const { return mesh_light_total_; }
+
     uint32_t material_count() const { return material_count_; }
     uint32_t light_count() const { return light_count_; }
     uint32_t instance_count() const { return instance_count_; }
@@ -91,6 +97,13 @@ private:
     std::vector<vulcao::ImageView> texture_views_;
     vulcao::Image fallback_texture_image_;
     vulcao::ImageView fallback_texture_view_;
+
+    // Emissive-triangle area lights and their sampling distribution.
+    vulcao::Buffer mesh_light_triangles_;
+    vulcao::Buffer mesh_light_cdf_;
+    vulcao::Buffer instance_light_base_;
+    uint32_t mesh_light_count_ = 0;
+    float mesh_light_total_ = 0.0f;
 
     SceneDescriptors scene_descriptors_;
 
