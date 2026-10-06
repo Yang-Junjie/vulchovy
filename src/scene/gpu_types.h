@@ -19,6 +19,7 @@ struct GpuMaterial {
     vec4 params;     // x = metallic, y = roughness, z = transmission, w = ior
     vec4 params2;    // x = anisotropy
     glm::ivec4 textures; // texture indices: x = base color, y = metal-rough, z = normal, w = emissive
+    vec4 attenuation;    // rgb = volume attenuation colour
 };
 
 /// @brief One entry of the light buffer.
@@ -58,7 +59,7 @@ struct GpuInstance {
     glm::uvec4 geometry; // x = vertex offset, y = index offset, z = index count, w = material index
 };
 
-static_assert(sizeof(GpuMaterial) == 80, "GpuMaterial must match std430");
+static_assert(sizeof(GpuMaterial) == 96, "GpuMaterial must match std430");
 static_assert(sizeof(GpuLight) == 48, "GpuLight must match std430");
 static_assert(sizeof(GpuInstance) == 144, "GpuInstance must match std430");
 

@@ -21,6 +21,7 @@ struct GpuMaterial {
     float4 params;  // x = metallic, y = roughness, z = transmission, w = ior
     float4 params2; // x = anisotropy
     int4 textures;  // x = base color, y = metal-rough, z = normal, w = emissive
+    float4 attenuation; // rgb = volume attenuation colour
 };
 
 struct GpuLight {

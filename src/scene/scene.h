@@ -20,6 +20,7 @@ struct Material {
     float transmission = 0.0f; // 0 = opaque, 1 = fully transmissive (glass)
     float ior = 1.5f;          // index of refraction for the dielectric
     vec3 emission{0.0f, 0.0f, 0.0f};
+    vec3 attenuation{1.0f, 1.0f, 1.0f}; // volume attenuation colour (tints transmission)
     int32_t base_color_texture = -1;
     int32_t metallic_roughness_texture = -1;
     int32_t normal_texture = -1;

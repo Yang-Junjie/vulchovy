@@ -107,6 +107,17 @@ Material convert_material(const cgltf_material* source, Scene& scene, TextureCac
     material.emission = vec3{source->emissive_factor[0], source->emissive_factor[1],
                              source->emissive_factor[2]} *
                         strength;
+
+    // KHR_materials_transmission / _volume / _ior.
+    if (source->has_transmission)
+        material.transmission = clamp01(source->transmission.transmission_factor);
+    if (source->has_ior && source->ior.ior > 0.0f)
+        material.ior = source->ior.ior;
+    if (source->has_volume) {
+        material.attenuation = vec3{source->volume.attenuation_color[0],
+                                    source->volume.attenuation_color[1],
+                                    source->volume.attenuation_color[2]};
+    }
     return material;
 }
 

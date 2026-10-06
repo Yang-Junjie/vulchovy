@@ -168,6 +168,7 @@ GpuScene::GpuScene(vulcao::Context& context, const Scene& scene, bool build_acce
             .textures = glm::ivec4(material.base_color_texture,
                                    material.metallic_roughness_texture,
                                    material.normal_texture, material.emissive_texture),
+            .attenuation = vec4(material.attenuation, 0.0f),
         });
     }
     material_count_ = static_cast<uint32_t>(materials.size());

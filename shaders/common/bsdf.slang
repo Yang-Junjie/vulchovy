@@ -131,7 +131,9 @@ Bsdf make_bsdf(GpuMaterial material, float3 normal, float3 tangent, bool front_f
     if (bsdf.transmissive) {
         // eta_i / eta_t: entering (front face) from air, or exiting from the glass.
         bsdf.eta = front_face ? (1.0 / ior) : ior;
-        bsdf.transmission_color = base_color;
+        // The volume attenuation colour tints the transmitted light (a
+        // distance-independent approximation of Beer-Lambert absorption).
+        bsdf.transmission_color = base_color * material.attenuation.rgb;
         bsdf.diffuse_albedo = float3(0.0, 0.0, 0.0);
         bsdf.f0 = float3(0.0, 0.0, 0.0);
         bsdf.p_spec = 1.0;
