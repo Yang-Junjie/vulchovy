@@ -219,7 +219,7 @@ GpuScene::GpuScene(vulcao::Context& context, const Scene& scene, bool build_acce
     // integrator needs these on the GPU before the scene descriptor set is built.
     environment_ = scene.environment;
     if (!environment_.valid())
-        environment_ = make_procedural_sky();
+        environment_ = make_black_environment();
 
     const EnvironmentSampling sampling = build_environment_sampling(environment_);
     env_pdf_scale_ = sampling.pdf_scale;

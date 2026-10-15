@@ -160,7 +160,7 @@ Scene build_scene(const SceneDescription& description) {
     if (!description.environment.path.empty())
         scene.environment = load_environment(description.environment.path);
     if (!scene.environment.valid())
-        scene.environment = make_procedural_sky();
+        scene.environment = make_black_environment();
     scene.environment.intensity = description.environment.intensity;
     scene.environment.rotation = description.environment.rotation;
 
@@ -173,11 +173,6 @@ SceneDescription default_scene_description() {
         (std::filesystem::path{VULCHOVY_ASSET_DIR} / "modern_buildings_2_2k.hdr").string();
     description.environment.intensity = 1.0f;
     description.environment.rotation = 0.0f;
-    description.lights.push_back(Light{
-        .position = vec3{0.0f, 3.6f, 0.0f},
-        .emission = vec3{6.0f, 6.0f, 6.0f},
-        .radius = 0.7f,
-    });
     return description;
 }
 

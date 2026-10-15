@@ -39,13 +39,16 @@ struct EnvironmentSampling {
 /// @brief Loads an equirectangular image through the shared image loader.
 ///
 /// Returns an invalid environment (and logs to stderr) when the file is missing
-/// or malformed, so the caller can fall back to a procedural sky.
+/// or malformed, so the caller can fall back to a black background.
 Environment load_environment(const std::filesystem::path& path);
 
 /// @brief Builds the CDF used to importance-sample the map.
 EnvironmentSampling build_environment_sampling(const Environment& environment);
 
-/// @brief A small procedural sky used when no HDR file is available.
-Environment make_procedural_sky();
+/// @brief A 1x1 black environment used when no HDR file is available.
+///
+/// It keeps the GPU environment resources valid while contributing no light, so
+/// the background renders black.
+Environment make_black_environment();
 
 } // namespace vulchovy

@@ -113,30 +113,11 @@ EnvironmentSampling build_environment_sampling(const Environment& environment) {
     return sampling;
 }
 
-Environment make_procedural_sky() {
+Environment make_black_environment() {
     Environment environment;
-    const uint32_t width = 512;
-    const uint32_t height = 256;
-    environment.width = width;
-    environment.height = height;
-    environment.pixels.resize(static_cast<size_t>(width) * height);
-
-    const float pi = glm::pi<float>();
-    for (uint32_t y = 0; y < height; ++y) {
-        const float theta = (static_cast<float>(y) + 0.5f) / static_cast<float>(height) * pi;
-        const float up = std::cos(theta); // +1 at the top, -1 at the bottom
-        for (uint32_t x = 0; x < width; ++x) {
-            const float phi = (static_cast<float>(x) + 0.5f) / static_cast<float>(width) *
-                              2.0f * pi;
-            const vec3 direction{std::sin(theta) * std::cos(phi), up,
-                                 std::sin(theta) * std::sin(phi)};
-            const float horizon = std::max(0.0f, up);
-            vec3 sky = glm::mix(vec3{0.55f, 0.62f, 0.75f}, vec3{0.16f, 0.32f, 0.72f}, horizon);
-            const float sun = std::pow(std::max(0.0f, glm::dot(direction, normalize(vec3{0.4f, 0.6f, 0.5f}))), 256.0f);
-            sky += vec3{6.0f, 5.4f, 4.6f} * sun;
-            environment.pixels[static_cast<size_t>(y) * width + x] = sky;
-        }
-    }
+    environment.width = 1;
+    environment.height = 1;
+    environment.pixels.assign(1, vec3{0.0f});
     return environment;
 }
 

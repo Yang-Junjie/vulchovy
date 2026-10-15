@@ -68,13 +68,6 @@ Scene make_default_scene() {
     scene.materials.push_back(Material{
         .base_color = vec3{0.95f, 0.95f, 0.95f}, .metallic = 0.0f, .roughness = 0.7f});
 
-    // A single sphere area light (a key light on top of the environment).
-    scene.lights.push_back(Light{
-        .position = vec3{0.0f, 3.6f, 0.0f},
-        .emission = vec3{6.0f, 6.0f, 6.0f},
-        .radius = 0.7f,
-    });
-
     auto add_node = [&scene](std::string name, uint32_t mesh, uint32_t material,
                              const mat4& transform) {
         Node node;
@@ -91,12 +84,12 @@ Scene make_default_scene() {
     add_node("blue", 0, 4, glm::translate(mat4{1.0f}, vec3{2.2f, 1.0f, 0.0f}));
     add_node("white", 0, 5, glm::translate(mat4{1.0f}, vec3{4.4f, 1.0f, 0.0f}));
 
-    // HDR environment (image-based lighting). Falls back to a procedural sky
+    // HDR environment (image-based lighting). Falls back to a black background
     // when the asset is unavailable so the renderer still runs.
     scene.environment = load_environment(
         std::filesystem::path{VULCHOVY_ASSET_DIR} / "modern_buildings_2_2k.hdr");
     if (!scene.environment.valid())
-        scene.environment = make_procedural_sky();
+        scene.environment = make_black_environment();
     scene.environment.intensity = 1.0f;
     scene.environment.rotation = 0.0f;
 
