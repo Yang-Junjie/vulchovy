@@ -7,7 +7,7 @@
 #include <vulcao/context.h>
 #include <vulcao/frame_manager.h>
 
-#include "camera/orbit_camera_controller.h"
+#include "camera/fps_camera_controller.h"
 #include "camera/perspective_camera.h"
 #include "io/scene_io.h"
 #include "platform/window.h"
@@ -52,7 +52,7 @@ private:
     std::unique_ptr<Integrator> integrator_;
 
     std::unique_ptr<PerspectiveCamera> camera_;
-    std::unique_ptr<OrbitCameraController> controller_;
+    std::unique_ptr<FpsCameraController> controller_;
     Scene scene_;
     SceneDescription description_;
     std::filesystem::path scene_path_;

@@ -128,7 +128,7 @@ void Application::init_vulkan() {
     display_pass_ = std::make_unique<DisplayPass>(context_);
     display_pass_->set_input(integrator_->output_view());
 
-    controller_ = std::make_unique<OrbitCameraController>(*camera_);
+    controller_ = std::make_unique<FpsCameraController>(*camera_);
 
     update_window_title();
 }

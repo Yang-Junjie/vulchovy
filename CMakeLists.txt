@@ -68,7 +68,7 @@ FetchContent_MakeAvailable(glfw glm)
 
 add_library(vulchovy_core STATIC
     src/app/application.cpp
-    src/camera/orbit_camera_controller.cpp
+    src/camera/fps_camera_controller.cpp
     src/camera/perspective_camera.cpp
     src/io/image.cpp
     src/io/obj.cpp
