@@ -31,6 +31,9 @@ struct Uniforms {
 
 static const uint kNoLight = 0xFFFFFFFFu;
 static const float kShadowEpsilon = 1e-3;
+// Samples brighter than this are almost always fireflies (extreme f/pdf); they
+// are clamped to keep the running average clean.
+static const float kFireflyClamp = 100.0;
 
 struct HitInfo {
     float3 position;
@@ -541,6 +544,12 @@ void computeMain(uint3 thread_id : SV_DispatchThreadID) {
             throughput /= survival;
         }
     }
+
+    // Reject non-finite samples (a single NaN would poison the pixel forever)
+    // and clamp fireflies.
+    if (!all(isfinite(radiance)))
+        radiance = float3(0.0, 0.0, 0.0);
+    radiance = min(radiance, float3(kFireflyClamp));
 
     const float3 previous = g_accumulation[pixel].rgb;
     const float3 accumulated = (previous * float(sample_count) + radiance) / float(sample_count + 1);
