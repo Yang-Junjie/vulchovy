@@ -333,7 +333,9 @@ float3 sample_direct_light(Bsdf bsdf, float3 position, float3 wo, inout Rng rng)
         const float light_pdf = p_mesh * pdf_area * dist2 / cos_light;
         const float bsdf_pdf_value = bsdf_pdf(bsdf, wo, wi);
         const float weight = power_heuristic(light_pdf, bsdf_pdf_value);
-        return f * emitted * (wi.z * cos_light / dist2) / light_pdf * weight;
+        // light_pdf is already a solid-angle pdf (the area pdf converted by the
+        // geometry term), so only the surface cosine remains in the estimator.
+        return f * emitted * wi.z / light_pdf * weight;
     }
 
     const float remaining = max(1.0 - p_mesh, 1e-6);
